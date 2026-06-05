@@ -2,7 +2,7 @@
 
 Python3 + tkinter + yt-dlp + libVLC 로 만든 GUI 프로그램입니다.
 노래 제목으로 유튜브를 검색하고, 원하는 곡을 **재생 리스트**에 담아
-**재생**, **가사 표시**, **MP3 다운로드**까지 한 창에서 처리합니다.
+**재생**, **가사 표시**, **MP3·MV(1080p MP4) 다운로드**까지 한 창에서 처리합니다.
 **노래 검색**과 **뮤직비디오 검색**을 구분할 수 있으며, MV는 **800×600 팝업**에서 **Full HD(1080p)** 로 재생합니다.
 (유튜브 API 키 불필요)
 
@@ -34,12 +34,16 @@ Python3 + tkinter + yt-dlp + libVLC 로 만든 GUI 프로그램입니다.
 - **뮤직비디오**: 별도 **팝업 창**(초기 800×600)에서 **Full HD(1080p)** 영상 재생, F11 전체화면
 - 오른쪽 패널에 **가사** 표시 (syncedlyrics)
 - 재생 리스트 곡 **MP3(192kbps) 일괄·선택 저장**
+- 재생 리스트 MV **MP4(1080p) 일괄·선택 저장**
 - **랜덤 재생** 및 곡 종료 후 자동 다음 곡
+- **Linux / macOS / Windows** 설치·실행 스크립트 제공
 - 검색·재생·가사·다운로드·MV 로딩은 **백그라운드 스레드** 처리 (GUI 멈춤 방지)
 
 ---
 
 ## 개발 환경
+
+### Raspberry Pi (기본 개발·테스트 환경)
 
 | 항목 | 내용 |
 |------|------|
@@ -53,6 +57,13 @@ Python3 + tkinter + yt-dlp + libVLC 로 만든 GUI 프로그램입니다.
 | 초기 창 크기 | 1240×820 (최소 1000×720) |
 
 > tkinter 창은 XWayland 디스플레이(`:0`)를 사용합니다. `run.sh` 가 `DISPLAY`·`XAUTHORITY` 를 자동 설정합니다.
+
+### macOS / Windows
+
+| OS | Python | VLC | ffmpeg | 설치 스크립트 |
+|----|--------|-----|--------|---------------|
+| macOS | uv + Python 3.11 | `~/Applications/VLC.app` | `~/.local/bin/ffmpeg` | `setup-mac.sh` |
+| Windows | Python 3.12 (tkinter) | VideoLAN VLC | `%LOCALAPPDATA%\getYoutubeUrl\bin` | `setup-windows.bat` / `setup-windows-manual.bat` |
 
 ---
 
@@ -81,39 +92,70 @@ Python3 + tkinter + yt-dlp + libVLC 로 만든 GUI 프로그램입니다.
 
 ## 설치 및 실행
 
-### 1) 가상환경·의존성 설치
+### Linux (Raspberry Pi 등)
+
+#### 1) 가상환경·의존성 설치
 
 ```bash
 cd ~/dev/getYoutubeUrl
 python3 -m venv .venv
-.venv/bin/pip install -U pip yt-dlp python-vlc syncedlyrics
+.venv/bin/pip install -U pip -r requirements.txt
+sudo apt install -y python3-tk vlc ffmpeg
 ```
 
-### 2) 스크립트로 실행
+#### 2) 스크립트로 실행
 
 ```bash
 ~/dev/getYoutubeUrl/run.sh
 ```
 
-### 3) 직접 실행
+#### 3) 직접 실행
 
 ```bash
 cd ~/dev/getYoutubeUrl
 DISPLAY=:0 ./.venv/bin/python getYoutubeUrl.py
 ```
 
-### 4) 백그라운드 실행 (서버·SSH)
+#### 4) 백그라운드 실행 (서버·SSH)
 
 ```bash
 cd ~/dev/getYoutubeUrl
 DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority nohup ./run.sh >> /tmp/getYoutubeUrl.log 2>&1 &
 ```
 
-### 5) 종료
+#### 5) 종료
 
 ```bash
 pkill -f getYoutubeUrl.py
 ```
+
+### macOS
+
+```bash
+cd ~/dev/getYoutubeUrl
+./setup-mac.sh    # uv, Python, VLC, ffmpeg, .venv 설치
+./run.sh          # 실행
+```
+
+### Windows
+
+| 스크립트 | 용도 |
+|----------|------|
+| `setup-windows.bat` | winget으로 Python·VLC·ffmpeg·`.venv` 설치 (권장) |
+| `setup-windows-manual.bat` | winget 없이 python.org / VideoLAN / gyan.dev 에서 직접 설치 |
+| `run-windows.bat` | 프로그램 실행 (VLC·ffmpeg PATH 자동 설정) |
+| `fix-run-windows.bat` | 실행 실패 시 진단·자동 복구 후 실행 |
+
+```text
+1. setup-windows-manual.bat  더블클릭  (또는 setup-windows.bat)
+2. run-windows.bat             더블클릭
+```
+
+실행이 안 되면 `fix-run-windows.bat` 을 실행하세요.  
+(`.venv` 없음, VLC·ffmpeg PATH, 배치 파일 인코딩/`%Y%` 변수 문제 등을 자동 점검·복구)
+
+> **Windows 참고:** `run-windows.bat` 은 cmd 호환을 위해 CRLF·ASCII 형식을 사용합니다.  
+> 파일명 `getYoutubeUrl.py` 의 `%Y%` 가 cmd 변수로 해석되지 않도록 경로를 분리해 실행합니다.
 
 > **인터넷 연결**이 필요합니다 (검색·재생·다운로드·가사).
 
@@ -146,7 +188,7 @@ pkill -f getYoutubeUrl.py
 
 | 버튼 / 동작 | 기능 |
 |-------------|------|
-| **추가 ↓** | 선택한 **노래**를 재생 리스트에 추가 (URL 중복 시 건너뜀) |
+| **추가 ↓** | 선택 항목(노래·MV)을 재생 리스트에 추가 (URL 중복 시 건너뜀) |
 | **🎬 MV 재생** | 선택 항목을 **MV 팝업**에서 재생 (800×600, Full HD) |
 | **브라우저로 열기** | 선택한 영상을 기본 웹 브라우저에서 열기 |
 | 결과 **더블클릭** | `🎵 노래` → 리스트 추가 / `🎬 MV` → MV 팝업 재생 |
@@ -165,9 +207,12 @@ pkill -f getYoutubeUrl.py
 |-------------|------|
 | **⬇ MP3 다운로드 (전체)** | 재생 리스트 **전체** 곡을 폴더에 MP3(192kbps)로 저장 |
 | **⬇ 선택 곡 저장** | 리스트에서 **선택한 곡 한 곡**만 MP3로 저장 |
+| **⬇ 선택 MV 저장** | 리스트에서 **선택한 MV 한 개**를 MP4(1080p)로 저장 |
+| **⬇ MV 저장 (전체)** | 리스트에 있는 **모든 MV**를 MP4(1080p)로 일괄 저장 |
 | 항목 **더블클릭** | `🎵 노래` → 오디오 재생 / `🎬 MV` → MV 팝업 재생 |
 
-저장 시 폴더 선택 다이얼로그가 뜨고, 상태줄에 `MP3 저장 중 (i/N)` 진행이 표시됩니다.
+저장 시 폴더 선택 다이얼로그가 뜨고, 상태줄에 `MP3/MV 저장 중 (i/N)` 진행이 표시됩니다.  
+MV 저장에는 **ffmpeg** 가 필요합니다 (MP3 저장과 동일).
 
 ### 재생 컨트롤
 
@@ -222,7 +267,13 @@ pkill -f getYoutubeUrl.py
 | 파일 / 폴더 | 설명 |
 |-------------|------|
 | `getYoutubeUrl.py` | 프로그램 본체 (tkinter GUI) |
-| `run.sh` | 실행 스크립트 (`DISPLAY`·`XAUTHORITY` 설정) |
+| `requirements.txt` | Python 패키지 목록 |
+| `run.sh` | Linux/macOS 실행 (`DISPLAY`·VLC PATH) |
+| `setup-mac.sh` | macOS 환경 자동 구축 (uv, VLC, ffmpeg) |
+| `setup-windows.bat` / `setup-windows.ps1` | Windows 환경 구축 (winget) |
+| `setup-windows-manual.bat` / `setup-windows-manual.ps1` | Windows 수동 구축 (winget 불필요) |
+| `run-windows.bat` | Windows 실행 |
+| `fix-run-windows.bat` / `fix-run-windows.ps1` | Windows 실행 문제 진단·자동 복구 |
 | `README.md` | 본 문서 |
 | `README.qiita.md` | Qiita 게시용 문서 (한글) |
 | `screenshot.png` | 실행 화면 캡처 |
@@ -266,6 +317,13 @@ pkill -f getYoutubeUrl.py
 - 파일명: `%(title)s.mp3` (영상 제목 기준)
 - 일괄·선택 저장 모두 `_save_worker` 에서 순차 처리
 
+### MV 저장 (재생 리스트)
+
+- 재생 리스트에서 `media_type == "mv"` 항목만 대상
+- `yt-dlp` 로 **1080p 이하 MP4** 다운로드 (`best[height<=1080]` 우선, 팝업 재생과 동일)
+- 파일명: `%(title)s.mp4`
+- **⬇ 선택 MV 저장** / **⬇ MV 저장 (전체)** 버튼
+
 ### 랜덤 재생
 
 - `shuffle=True` 일 때 `_next_index()` 가 현재 곡을 피해 무작위 인덱스 반환
@@ -286,13 +344,20 @@ pkill -f getYoutubeUrl.py
 | v7 | 초기 창 크기 1240×820, README 전면 정리 |
 | v8 | 노래/뮤직비디오 검색 구분, MV 팝업 전체화면 재생, 구분 열·🎬 MV 재생 버튼 |
 | v9 | MV 팝업 초기 800×600, 영상 Full HD(1080p), F11/Esc 전체화면 |
+| v10 | Windows 설치·실행 스크립트 (`setup-windows`, `run-windows`) |
+| v11 | Windows 수동 설치·실행 복구 (`setup-windows-manual`, `fix-run-windows`), `run-windows.bat` cmd 호환 |
+| v12 | 재생 리스트 MV MP4(1080p) 일괄·선택 저장 버튼 |
 
 ---
 
 ## 참고
 
+- **GitHub:** [https://github.com/xiger78/getYoutubeUrl](https://github.com/xiger78/getYoutubeUrl)
 - 유튜브 정책·지역에 따라 일부 영상은 재생·다운로드가 실패할 수 있습니다.
-- MV Full HD 재생은 네트워크·CPU 부하에 따라 버퍼링이 있을 수 있습니다.
-- 검색이 안 되면: `cd ~/dev/getYoutubeUrl && .venv/bin/pip install -U yt-dlp`
-- MP3 저장 실패 시 `ffmpeg` 설치 확인: `sudo apt install ffmpeg`
-- 한글 입력: `~/setup-korean-input.sh` (fcitx5) 참고
+- MV Full HD 재생·저장은 네트워크·CPU 부하에 따라 버퍼링·지연이 있을 수 있습니다.
+- 검색이 안 되면: `.venv` 에서 `pip install -U yt-dlp`
+- MP3·MV 저장 실패 시 **ffmpeg** 설치 확인
+  - Linux: `sudo apt install ffmpeg`
+  - Windows: `setup-windows-manual.bat` 또는 `winget install Gyan.FFmpeg`
+- Windows `run-windows.bat` 실행 오류: `fix-run-windows.bat` 실행
+- Linux 한글 입력: `~/setup-korean-input.sh` (fcitx5) 참고
