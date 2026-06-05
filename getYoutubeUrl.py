@@ -32,6 +32,12 @@ except ImportError:
 DEFAULT_RESULTS = 20   # 검색 시 기본으로 가져올 결과 수
 MAX_RESULTS = 200      # 검색 개수 입력 상한 (재생 리스트 추가 자체는 무제한)
 
+# MV 저장 시 yt-dlp format (팝업 재생과 동일 — 1080p 이하)
+MV_DOWNLOAD_FORMAT = (
+    "best[height<=1080][ext=mp4]/best[height<=1080]/"
+    "bestvideo[height<=1080]+bestaudio/best"
+)
+
 # 뮤직비디오 제목 판별 (MV, Official Video, 뮤직비디오 등)
 MV_TITLE_RE = re.compile(
     r"(?i)(official\s*)?(m/?v|music\s*video|뮤직비디오|뮤비|ミュージック.?ビデオ)"
@@ -317,6 +323,12 @@ class YoutubeFinder(tk.Tk):
         self.save_one_btn = ttk.Button(dlbtn, text="⬇ 선택 곡 저장",
                                        command=self.save_selected_mp3)
         self.save_one_btn.pack(side="left", padx=3)
+        self.save_mv_btn = ttk.Button(dlbtn, text="⬇ 선택 MV 저장",
+                                      command=self.save_selected_mv)
+        self.save_mv_btn.pack(side="left", padx=3)
+        self.save_mv_all_btn = ttk.Button(dlbtn, text="⬇ MV 저장 (전체)",
+                                         command=self.save_all_mv)
+        self.save_mv_all_btn.pack(side="left", padx=3)
 
         # 재생 컨트롤
         pbtn = tk.Frame(left, bg="#0f172a")
@@ -447,10 +459,12 @@ class YoutubeFinder(tk.Tk):
                         self._set_lyrics(title, lrc or "가사를 찾지 못했습니다.")
                 elif kind == "save_done":
                     ok, total, folder = msg[1], msg[2], msg[3]
+                    save_kind = msg[4] if len(msg) > 4 else "mp3"
                     self._saving = False
-                    self.save_btn.config(state="normal")
-                    self.save_one_btn.config(state="normal")
-                    self.status.config(text=f"MP3 저장 완료: {ok}/{total}곡 → {folder}")
+                    self._set_save_buttons_state(True)
+                    unit = "곡" if save_kind == "mp3" else "MV"
+                    label = "MP3" if save_kind == "mp3" else "MV"
+                    self.status.config(text=f"{label} 저장 완료: {ok}/{total}{unit} → {folder}")
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
@@ -740,7 +754,17 @@ class YoutubeFinder(tk.Tk):
         self.clipboard_append("\n".join(p["url"] for p in self.playlist))
         self.status.config(text=f"재생 리스트 {len(self.playlist)}개 URL을 복사했습니다.")
 
-    # ---------------- MP3 다운로드 ----------------
+    def _set_save_buttons_state(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        self.save_btn.config(state=state)
+        self.save_one_btn.config(state=state)
+        self.save_mv_btn.config(state=state)
+        self.save_mv_all_btn.config(state=state)
+
+    def _playlist_mv_items(self) -> list[dict]:
+        return [it for it in self.playlist if it.get("media_type") == "mv"]
+
+    # ---------------- MP3 / MV 다운로드 ----------------
     def save_all_mp3(self) -> None:
         """재생 리스트의 모든 곡을 MP3로 저장."""
         if not self.playlist:
@@ -756,6 +780,26 @@ class YoutubeFinder(tk.Tk):
             return
         self._start_mp3_download([self.playlist[idx]])
 
+    def save_selected_mv(self) -> None:
+        """재생 리스트에서 선택한 MV 한 개를 영상 파일로 저장."""
+        idx = self._plist_index()
+        if idx is None:
+            self.status.config(text="저장할 MV를 선택하세요.")
+            return
+        item = self.playlist[idx]
+        if item.get("media_type") != "mv":
+            self.status.config(text="선택한 항목은 MV가 아닙니다. 🎬 MV 항목을 선택하세요.")
+            return
+        self._start_mv_download([item])
+
+    def save_all_mv(self) -> None:
+        """재생 리스트에 있는 모든 MV를 영상 파일로 저장."""
+        items = self._playlist_mv_items()
+        if not items:
+            self.status.config(text="재생 리스트에 MV가 없습니다.")
+            return
+        self._start_mv_download(items)
+
     def _start_mp3_download(self, items: list[dict]) -> None:
         if self._saving:
             return
@@ -763,32 +807,51 @@ class YoutubeFinder(tk.Tk):
         if not folder:
             return
         self._saving = True
-        self.save_btn.config(state="disabled")
-        self.save_one_btn.config(state="disabled")
-        threading.Thread(target=self._save_worker, args=(folder, items), daemon=True).start()
+        self._set_save_buttons_state(False)
+        threading.Thread(
+            target=self._save_worker, args=(folder, items, "mp3"), daemon=True,
+        ).start()
 
-    def _save_worker(self, folder: str, items: list[dict]) -> None:
+    def _start_mv_download(self, items: list[dict]) -> None:
+        if self._saving:
+            return
+        folder = filedialog.askdirectory(title="MV 영상을 저장할 폴더 선택")
+        if not folder:
+            return
+        self._saving = True
+        self._set_save_buttons_state(False)
+        threading.Thread(
+            target=self._save_worker, args=(folder, items, "mv"), daemon=True,
+        ).start()
+
+    def _save_worker(self, folder: str, items: list[dict], save_kind: str) -> None:
         total = len(items)
         ok = 0
+        is_mv = save_kind == "mv"
         for i, item in enumerate(items, 1):
-            self._queue.put(("status", f"MP3 저장 중 ({i}/{total}): {item['title']} …"))
-            opts = {
+            label = "MV" if is_mv else "MP3"
+            self._queue.put(("status", f"{label} 저장 중 ({i}/{total}): {item['title']} …"))
+            opts: dict = {
                 "quiet": True, "no_warnings": True, "noplaylist": True,
-                "format": "bestaudio/best",
                 "outtmpl": os.path.join(folder, "%(title)s.%(ext)s"),
-                "postprocessors": [{
+            }
+            if is_mv:
+                opts["format"] = MV_DOWNLOAD_FORMAT
+                opts["merge_output_format"] = "mp4"
+            else:
+                opts["format"] = "bestaudio/best"
+                opts["postprocessors"] = [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
-                }],
-            }
+                }]
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([item["url"]])
                 ok += 1
             except Exception:  # noqa: BLE001
                 pass
-        self._queue.put(("save_done", ok, total, folder))
+        self._queue.put(("save_done", ok, total, folder, save_kind))
 
     def _on_close(self) -> None:
         try:
