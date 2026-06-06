@@ -3,17 +3,38 @@
 cd "$(dirname "$0")"
 
 if [ "$(uname -s)" = "Darwin" ]; then
-  # macOS: VLC를 ~/Applications 또는 /Applications 에서 찾음
-  VLC_APP="${VLC_APP:-}"
-  if [ -z "${VLC_APP}" ]; then
-    if [ -d "${HOME}/Applications/VLC.app" ]; then
-      VLC_APP="${HOME}/Applications/VLC.app"
-    elif [ -d "/Applications/VLC.app" ]; then
-      VLC_APP="/Applications/VLC.app"
+  # macOS: VLC를 ~/Applications 또는 /Applications 에서 찾음 (현재 CPU와 호환되는 것만)
+  vlc_usable() {
+    local app="$1"
+    local exe="${app}/Contents/MacOS/VLC"
+    local lib="${app}/Contents/MacOS/lib/libvlccore.dylib"
+    local arch
+    arch="$(uname -m)"
+    [ -d "${app}" ] && [ -x "${exe}" ] && [ -f "${lib}" ] || return 1
+    if command -v lipo >/dev/null 2>&1; then
+      lipo -info "${lib}" 2>/dev/null | grep -q "${arch}"
+    else
+      file "${lib}" | grep -q "${arch}"
     fi
+  }
+
+  VLC_APP="${VLC_APP:-}"
+  if [ -n "${VLC_APP}" ] && ! vlc_usable "${VLC_APP}"; then
+    echo "VLC_APP=${VLC_APP} 가 이 Mac($(uname -m))과 호환되지 않습니다." >&2
+    echo "./setup-mac.sh 를 실행하거나 VLC_APP 경로를 바꿔 주세요." >&2
+    exit 1
   fi
-  if [ -z "${VLC_APP}" ] || [ ! -d "${VLC_APP}" ]; then
-    echo "VLC가 필요합니다. 먼저 ./setup-mac.sh 를 실행하세요." >&2
+  if [ -z "${VLC_APP}" ]; then
+    for candidate in "${HOME}/Applications/VLC.app" "/Applications/VLC.app"; do
+      if vlc_usable "${candidate}"; then
+        VLC_APP="${candidate}"
+        break
+      fi
+    done
+  fi
+  if [ -z "${VLC_APP}" ]; then
+    echo "VLC가 필요합니다 (Apple Silicon / Intel 호환)." >&2
+    echo "먼저 ./setup-mac.sh 를 실행하세요." >&2
     exit 1
   fi
   VLC_MACOS="${VLC_APP}/Contents/MacOS"
