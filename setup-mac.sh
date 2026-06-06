@@ -1,5 +1,6 @@
 #!/bin/bash
 # getYoutubeUrl macOS 환경 자동 구축 (sudo 불필요)
+# Apple Silicon (arm64) / Intel (x86_64) 공통 — VLC Universal 자동 설치
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -11,24 +12,52 @@ if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 # shellcheck disable=SC1091
-source "${HOME}/.local/bin/env"
+if [ -f "${HOME}/.local/bin/env" ]; then
+  source "${HOME}/.local/bin/env"
+fi
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv를 찾을 수 없습니다. Homebrew: brew install uv" >&2
+  exit 1
+fi
 
 echo "==> Python 3.11 설치"
 uv python install 3.11
 
-# VLC (mp3player와 동일 — ~/Applications)
+# VLC — Universal binary (Apple Silicon + Intel 共通)
+VLC_VERSION="3.0.23"
+VLC_DMG="vlc-${VLC_VERSION}-universal.dmg"
+VLC_URL="https://download.videolan.org/pub/videolan/vlc/${VLC_VERSION}/macosx/${VLC_DMG}"
 VLC_APP="${HOME}/Applications/VLC.app"
-if [ ! -x "${VLC_APP}/Contents/MacOS/VLC" ]; then
-  echo "==> VLC 다운로드 및 설치 (${VLC_APP})"
+
+vlc_usable() {
+  local exe="${VLC_APP}/Contents/MacOS/VLC"
+  local lib="${VLC_APP}/Contents/MacOS/lib/libvlccore.dylib"
+  local arch
+  arch="$(uname -m)"
+  [ -x "${exe}" ] && [ -f "${lib}" ] || return 1
+  if command -v lipo >/dev/null 2>&1; then
+    lipo -info "${lib}" 2>/dev/null | grep -q "${arch}"
+  else
+    file "${lib}" | grep -q "${arch}"
+  fi
+}
+
+if ! vlc_usable; then
+  echo "==> VLC 다운로드 및 설치 (${VLC_APP}, universal, $(uname -m))"
   TMP_DMG="$(mktemp /tmp/vlc-XXXXXX.dmg)"
-  curl -fsSL -o "${TMP_DMG}" \
-    "https://download.videolan.org/pub/videolan/vlc/3.0.21/macosx/vlc-3.0.21-intel64.dmg"
+  curl -fsSL -o "${TMP_DMG}" "${VLC_URL}"
   mkdir -p "${HOME}/Applications"
   hdiutil attach "${TMP_DMG}" -nobrowse -quiet
   rm -rf "${VLC_APP}"
   cp -R "/Volumes/VLC media player/VLC.app" "${HOME}/Applications/"
   hdiutil detach "/Volumes/VLC media player" -quiet
   rm -f "${TMP_DMG}"
+  vlc_usable || {
+    echo "VLC 설치 후 현재 Mac($(uname -m))에서 사용할 수 없습니다." >&2
+    exit 1
+  }
 fi
 
 # ffmpeg (MP3 저장용)
