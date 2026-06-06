@@ -85,36 +85,78 @@ function Find-PythonLauncher {
     return $null
 }
 
+function Write-TextFileLf {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Content,
+        [switch]$Utf8BOM
+    )
+    $encoding = if ($Utf8BOM) {
+        New-Object Text.UTF8Encoding $true
+    } else {
+        New-Object Text.UTF8Encoding $false
+    }
+    [IO.File]::WriteAllText($Path, ($Content -replace "`r?`n", "`r`n"), $encoding)
+}
+
 function Repair-RunWindowsBat {
     $batPath = Join-Path $PSScriptRoot "run-windows.bat"
-    $expected = @(
-        '@echo off',
-        'setlocal',
-        'cd /d "%~dp0"',
-        '',
-        'set "VENV_PY=%~dp0.venv\Scripts\python.exe"',
-        'if not exist "%VENV_PY%" goto NO_VENV',
-        '',
-        'if exist "%ProgramFiles%\VideoLAN\VLC" set "PATH=%ProgramFiles%\VideoLAN\VLC;%PATH%"',
-        'if exist "%ProgramFiles(x86)%\VideoLAN\VLC" set "PATH=%ProgramFiles(x86)%\VideoLAN\VLC;%PATH%"',
-        '',
-        'set "FFMPEG_BIN=%LOCALAPPDATA%\getYoutubeUrl\bin"',
-        'if exist "%FFMPEG_BIN%\ffmpeg.exe" set "PATH=%FFMPEG_BIN%;%PATH%"',
-        '',
-        'rem Avoid %Y% expansion in getYoutubeUrl.py (cmd parses %Y as a variable)',
-        'set "MAIN=g"',
-        'set "MAIN=%MAIN%etYoutubeUrl.py"',
-        '',
-        '"%VENV_PY%" "%~dp0%MAIN%" %*',
-        'exit /b %ERRORLEVEL%',
-        '',
-        ':NO_VENV',
-        'echo [.venv missing] Run setup-windows-manual.bat or fix-run-windows.bat first. 1>&2',
-        'exit /b 1',
-        ''
-    ) -join "`r`n"
+    $ps1Path = Join-Path $PSScriptRoot "run-windows.ps1"
+
+    $expectedBat = @'
+@echo off
+setlocal
+cd /d "%~dp0"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-windows.ps1" %*
+set "ERR=%ERRORLEVEL%"
+if not "%ERR%"=="0" (
+    echo.
+    echo [ERROR] getYoutubeUrl start failed. Try fix-run-windows.bat
+    pause
+    exit /b %ERR%
+)
+exit /b 0
+'@
+
+    $expectedPs1 = @'
+# getYoutubeUrl Windows run (called from run-windows.bat)
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+
+$ErrorActionPreference = "Stop"
+Set-Location $PSScriptRoot
+
+$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    Write-Host "[.venv missing] Run setup-windows-manual.bat or fix-run-windows.bat first." -ForegroundColor Red
+    exit 1
+}
+
+$vlcPaths = @(
+    (Join-Path $env:ProgramFiles "VideoLAN\VLC"),
+    (Join-Path ${env:ProgramFiles(x86)} "VideoLAN\VLC")
+)
+foreach ($vlcDir in $vlcPaths) {
+    if (Test-Path $vlcDir) {
+        $env:Path = "$vlcDir;$env:Path"
+    }
+}
+
+$ffmpegBin = Join-Path $env:LOCALAPPDATA "getYoutubeUrl\bin"
+if (Test-Path (Join-Path $ffmpegBin "ffmpeg.exe")) {
+    $env:Path = "$ffmpegBin;$env:Path"
+}
+
+$mainPy = Join-Path $PSScriptRoot "getYoutubeUrl.py"
+& $venvPython $mainPy @Args
+exit $LASTEXITCODE
+'@
 
     $needsRepair = $false
+    if (-not (Test-Path $ps1Path)) {
+        $needsRepair = $true
+        Add-Issue "run-windows.ps1 파일이 없습니다."
+    }
     if (-not (Test-Path $batPath)) {
         $needsRepair = $true
         Add-Issue "run-windows.bat 파일이 없습니다."
@@ -124,22 +166,30 @@ function Repair-RunWindowsBat {
             $needsRepair = $true
             Add-Issue "run-windows.bat 줄바꿈이 LF 전용입니다 (Windows cmd 호환 문제)."
         }
-        $text = [Text.Encoding]::UTF8.GetString($raw).TrimStart([char]0xFEFF)
-        if ($text -match '[\uAC00-\uD7A3]' -and $text -match 'if not exist .*\(') {
-            $needsRepair = $true
-            Add-Issue "run-windows.bat 한글+괄호 if 블록으로 cmd 파싱 오류 가능."
+        for ($i = 0; $i -lt $raw.Length - 2; $i++) {
+            if ($raw[$i] -eq 0x0D -and $raw[$i + 1] -eq 0x0D -and $raw[$i + 2] -eq 0x0A) {
+                $needsRepair = $true
+                Add-Issue "run-windows.bat 줄바꿈이 CR+CR+LF(이중 CR) 입니다."
+                break
+            }
         }
-        if ($text -notmatch 'FFMPEG_BIN') {
+        $text = [Text.Encoding]::UTF8.GetString($raw).TrimStart([char]0xFEFF)
+        if ($text -notmatch 'run-windows\.ps1') {
             $needsRepair = $true
-            Add-Issue "run-windows.bat 에 ffmpeg PATH 설정이 없습니다."
+            Add-Issue "run-windows.bat 이 run-windows.ps1 을 호출하지 않습니다."
+        }
+        if ($text -match 'getYoutubeUrl\.py') {
+            $needsRepair = $true
+            Add-Issue "run-windows.bat 에 getYoutubeUrl.py 직접 호출(%Y% 파싱 위험)이 있습니다."
         }
     }
 
     if ($needsRepair) {
-        [IO.File]::WriteAllText($batPath, $expected, (New-Object Text.UTF8Encoding $false))
-        Add-Fixed "run-windows.bat 을 Windows 호환 형식(CRLF, ASCII)으로 복구"
+        Write-TextFileLf -Path $batPath -Content $expectedBat
+        Write-TextFileLf -Path $ps1Path -Content $expectedPs1 -Utf8BOM
+        Add-Fixed "run-windows.bat / run-windows.ps1 을 Windows 호환 형식으로 복구"
     } else {
-        Write-Host "   [--] run-windows.bat 형식 정상"
+        Write-Host "   [--] run-windows.bat / run-windows.ps1 형식 정상"
     }
 }
 
@@ -176,7 +226,10 @@ function Ensure-PythonPackages {
     )
     $missing = @()
     foreach ($check in $checks) {
-        & $VenvPython -c $check.Code 2>$null | Out-Null
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & $VenvPython -c $check.Code 2>&1 | Out-Null
+        $ErrorActionPreference = $oldEap
         if ($LASTEXITCODE -ne 0) {
             $missing += $check.Module
         }
@@ -309,7 +362,10 @@ function Test-AppLaunch {
         $env:Path = "$ffBin;$env:Path"
     }
 
-    & $VenvPython -c "import tkinter; import vlc; import yt_dlp; vlc.Instance('--quiet'); print('launch-check-ok')"
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $VenvPython -c "import tkinter; import vlc; import yt_dlp; vlc.Instance('--quiet'); print('launch-check-ok')" 2>&1 | Out-Null
+    $ErrorActionPreference = $oldEap
     if ($LASTEXITCODE -ne 0) {
         throw "실행 사전 검사 실패"
     }
@@ -353,5 +409,5 @@ if ($NoLaunch) {
     exit 0
 }
 
-$runBat = Join-Path $PSScriptRoot "run-windows.bat"
-& cmd.exe /c "`"$runBat`""
+$runPs1 = Join-Path $PSScriptRoot "run-windows.ps1"
+& powershell -NoProfile -ExecutionPolicy Bypass -File $runPs1

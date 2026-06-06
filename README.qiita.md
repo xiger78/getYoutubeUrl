@@ -133,15 +133,19 @@ cd ~/dev/getYoutubeUrl
 
 | 스크립트 | 설명 |
 |----------|------|
-| `setup-windows.bat` | winget으로 Python·VLC·ffmpeg·`.venv` 설치 |
+| `setup-windows.bat` | 환경 구축 (winget 사용, **없으면 manual 자동 전환**) |
 | `setup-windows-manual.bat` | winget 없이 직접 다운로드 설치 |
-| `run-windows.bat` | 프로그램 실행 |
+| `run-windows.bat` | 프로그램 실행 (`run-windows.ps1` 호출) |
+| `run-windows.ps1` | 실행 로직 (`.venv`, VLC·ffmpeg PATH) |
 | `fix-run-windows.bat` | 실행 문제 진단·자동 복구 |
 
 ```text
-setup-windows-manual.bat  →  run-windows.bat
+setup-windows.bat  →  run-windows.bat
 (실행 오류 시 fix-run-windows.bat)
 ```
+
+> `.bat` 파일은 **ASCII + CRLF** 래퍼만 사용합니다. 한글 메시지·설치 로직은 `.ps1` 에 있습니다.  
+> `setup-windows.ps1` 은 winget이 없으면 `setup-windows-manual.ps1` 로 자동 전환합니다.
 
 ## 6. 실행 방법
 
@@ -296,9 +300,9 @@ MV 재생 시 메인 창 오디오는 자동 정지합니다.
 | `requirements.txt` | Python 패키지 |
 | `run.sh` | Linux/macOS 실행 |
 | `setup-mac.sh` | macOS 환경 구축 |
-| `setup-windows.bat` / `.ps1` | Windows 환경 구축 (winget) |
+| `setup-windows.bat` / `.ps1` | Windows 환경 구축 (winget, 없으면 manual 전환) |
 | `setup-windows-manual.bat` / `.ps1` | Windows 수동 구축 |
-| `run-windows.bat` | Windows 실행 |
+| `run-windows.bat` / `run-windows.ps1` | Windows 실행 |
 | `fix-run-windows.bat` / `.ps1` | Windows 실행 복구 |
 | `README.md` | 상세 문서 |
 | `README.qiita.md` | Qiita용 문서 |
@@ -314,7 +318,8 @@ MV 재생 시 메인 창 오디오는 자동 정지합니다.
 | MV 저장 실패 | ffmpeg 설치 확인, 네트워크·디스크 공간 확인 |
 | MV 재생 실패·끊김 | `pip install -U yt-dlp`, 네트워크·CPU 부하 확인 |
 | GUI 안 뜸 (Linux) | `DISPLAY=:0` 설정, XWayland 확인 |
-| Windows 실행 안 됨 | `fix-run-windows.bat` (`.venv`, VLC PATH, 배치 인코딩) |
+| Windows 설치 안 됨 | `setup-windows.bat` (winget 없으면 manual 자동 전환) 또는 `setup-windows-manual.bat` |
+| Windows 실행 안 됨 | `fix-run-windows.bat` (`.venv`, VLC PATH, bat/ps1 복구) |
 | 가사 없음 | `pip install syncedlyrics`, 제목·네트워크 확인 |
 | 한글 입력 안 됨 (Linux) | fcitx5 + hangul 설치 |
 
@@ -334,6 +339,7 @@ MV 재생 시 메인 창 오디오는 자동 정지합니다.
 | v10 | Windows 설치·실행 스크립트 |
 | v11 | Windows 수동 설치·실행 복구 (`fix-run-windows`) |
 | v12 | 재생 리스트 MV MP4(1080p) 저장 버튼 |
+| v13 | Windows bat/ps1 분리·CRLF·winget→manual 자동 전환, `run-windows.ps1` |
 
 ## 13. 참고·GitHub
 

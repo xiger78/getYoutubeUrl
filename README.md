@@ -141,21 +141,22 @@ cd ~/dev/getYoutubeUrl
 
 | 스크립트 | 용도 |
 |----------|------|
-| `setup-windows.bat` | winget으로 Python·VLC·ffmpeg·`.venv` 설치 (권장) |
+| `setup-windows.bat` | Windows 환경 구축 (winget 사용, **없으면 수동 설치로 자동 전환**) |
 | `setup-windows-manual.bat` | winget 없이 python.org / VideoLAN / gyan.dev 에서 직접 설치 |
-| `run-windows.bat` | 프로그램 실행 (VLC·ffmpeg PATH 자동 설정) |
+| `run-windows.bat` | 프로그램 실행 (`run-windows.ps1` 호출) |
+| `run-windows.ps1` | 실제 실행 로직 (`.venv`, VLC·ffmpeg PATH) |
 | `fix-run-windows.bat` | 실행 실패 시 진단·자동 복구 후 실행 |
 
 ```text
-1. setup-windows-manual.bat  더블클릭  (또는 setup-windows.bat)
-2. run-windows.bat             더블클릭
+1. setup-windows.bat  더블클릭  (winget 없어도 자동으로 수동 설치 전환)
+2. run-windows.bat    더블클릭
 ```
 
-실행이 안 되면 `fix-run-windows.bat` 을 실행하세요.  
-(`.venv` 없음, VLC·ffmpeg PATH, 배치 파일 인코딩/`%Y%` 변수 문제 등을 자동 점검·복구)
+실행·설치가 안 되면 `fix-run-windows.bat` 을 실행하세요.
 
-> **Windows 참고:** `run-windows.bat` 은 cmd 호환을 위해 CRLF·ASCII 형식을 사용합니다.  
-> 파일명 `getYoutubeUrl.py` 의 `%Y%` 가 cmd 변수로 해석되지 않도록 경로를 분리해 실행합니다.
+> **Windows 배치 파일 주의:** `.bat` 파일에 **한글 echo** 또는 **LF 줄바꿈**이 있으면 cmd가 명령을 깨뜨릴 수 있습니다.  
+> 본 프로젝트의 `.bat` 은 **ASCII + CRLF** 래퍼만 두고, 실제 작업은 `.ps1` 이 처리합니다.  
+> `setup-windows.bat` 은 winget이 없을 때 `setup-windows-manual.ps1` 로 자동 전환합니다.
 
 > **인터넷 연결**이 필요합니다 (검색·재생·다운로드·가사).
 
@@ -270,9 +271,9 @@ MV 저장에는 **ffmpeg** 가 필요합니다 (MP3 저장과 동일).
 | `requirements.txt` | Python 패키지 목록 |
 | `run.sh` | Linux/macOS 실행 (`DISPLAY`·VLC PATH) |
 | `setup-mac.sh` | macOS 환경 자동 구축 (uv, VLC, ffmpeg) |
-| `setup-windows.bat` / `setup-windows.ps1` | Windows 환경 구축 (winget) |
+| `setup-windows.bat` / `setup-windows.ps1` | Windows 환경 구축 (winget, 없으면 manual 자동 전환) |
 | `setup-windows-manual.bat` / `setup-windows-manual.ps1` | Windows 수동 구축 (winget 불필요) |
-| `run-windows.bat` | Windows 실행 |
+| `run-windows.bat` / `run-windows.ps1` | Windows 실행 (bat→ps1) |
 | `fix-run-windows.bat` / `fix-run-windows.ps1` | Windows 실행 문제 진단·자동 복구 |
 | `README.md` | 본 문서 |
 | `README.qiita.md` | Qiita 게시용 문서 (한글) |
@@ -347,6 +348,7 @@ MV 저장에는 **ffmpeg** 가 필요합니다 (MP3 저장과 동일).
 | v10 | Windows 설치·실행 스크립트 (`setup-windows`, `run-windows`) |
 | v11 | Windows 수동 설치·실행 복구 (`setup-windows-manual`, `fix-run-windows`), `run-windows.bat` cmd 호환 |
 | v12 | 재생 리스트 MV MP4(1080p) 일괄·선택 저장 버튼 |
+| v13 | Windows bat/ps1 분리·CRLF·winget→manual 자동 전환, `run-windows.ps1` 추가 |
 
 ---
 
@@ -359,5 +361,6 @@ MV 저장에는 **ffmpeg** 가 필요합니다 (MP3 저장과 동일).
 - MP3·MV 저장 실패 시 **ffmpeg** 설치 확인
   - Linux: `sudo apt install ffmpeg`
   - Windows: `setup-windows-manual.bat` 또는 `winget install Gyan.FFmpeg`
-- Windows `run-windows.bat` 실행 오류: `fix-run-windows.bat` 실행
+- Windows **설치** 오류: `setup-windows.bat` 재실행 (winget 없으면 manual 자동 전환) 또는 `setup-windows-manual.bat`
+- Windows **실행** 오류: `fix-run-windows.bat` 실행
 - Linux 한글 입력: `~/setup-korean-input.sh` (fcitx5) 참고

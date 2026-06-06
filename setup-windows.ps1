@@ -163,6 +163,17 @@ function Get-VenvPython {
 
 # --- 본체 ---
 
+if (-not (Has-Command "winget")) {
+    Write-Host "   winget 없음 - setup-windows-manual.ps1 로 전환합니다." -ForegroundColor Yellow
+    Write-Host ""
+    $manualScript = Join-Path $PSScriptRoot "setup-windows-manual.ps1"
+    if (-not (Test-Path $manualScript)) {
+        throw "winget 이 없고 setup-windows-manual.ps1 도 찾을 수 없습니다."
+    }
+    & $manualScript
+    exit $LASTEXITCODE
+}
+
 $pythonInfo = Ensure-Python
 $pythonCmd = $pythonInfo.Cmd
 $pythonArgs = $pythonInfo.Args
