@@ -56,7 +56,39 @@ function Download-File {
     }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+    Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing -MaximumRedirection 10
+}
+
+function Test-PythonExe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [string[]]$Args = @()
+    )
+
+    $isPath = $Exe -match '[\\/]' -or $Exe -match '\.exe$'
+    if ($isPath) {
+        if (-not (Test-Path $Exe)) { return $null }
+    } elseif (-not (Has-Command $Exe)) {
+        return $null
+    }
+    try {
+        $versionText = & $Exe @($Args + @("-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"))
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $parts = $versionText.Trim().Split(".")
+        $major = [int]$parts[0]
+        $minor = [int]$parts[1]
+        if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 10)) { return $null }
+
+        & $Exe @($Args + @("-c", "import tkinter")) | Out-Null
+        if ($LASTEXITCODE -ne 0) { return $null }
+
+        return @{
+            Cmd  = $Exe
+            Args = $Args
+        }
+    } catch {
+        return $null
+    }
 }
 
 function Find-Python {
@@ -90,6 +122,20 @@ function Find-Python {
             continue
         }
     }
+
+    $versionParts = $PythonVersion.Split(".")
+    $pythonTag = "Python$($versionParts[0])$($versionParts[1])"
+    $pathCandidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\$pythonTag\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\$pythonTag-32\python.exe"),
+        (Join-Path ${env:ProgramFiles} "$pythonTag\python.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "$pythonTag\python.exe")
+    )
+    foreach ($exe in $pathCandidates) {
+        $found = Test-PythonExe -Exe $exe
+        if ($found) { return $found }
+    }
+
     return $null
 }
 
@@ -99,12 +145,15 @@ function Install-PythonDirect {
     Write-Host "==> Python $PythonVersion 다운로드 및 설치"
     Download-File -Url $PythonUrl -Destination $installer
 
-    $args = "/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_tcltk=1 Include_test=0"
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).
+        IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $scope = if ($isAdmin) { "InstallAllUsers=1" } else { "InstallAllUsers=0" }
+    $args = "/quiet $scope PrependPath=1 Include_pip=1 Include_tcltk=1 Include_test=0"
     $proc = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        throw "Python 설치 실패 (exit code $($proc.ExitCode))"
-    }
     Refresh-SessionPath
+    if (-not (Find-Python)) {
+        throw "Python 설치 실패 (exit code $($proc.ExitCode)). 관리자 권한으로 다시 시도하세요."
+    }
 }
 
 function Ensure-Python {
@@ -144,9 +193,10 @@ function Install-VlcDirect {
         throw "VLC 설치 파일 크기가 비정상입니다. 네트워크 연결을 확인하세요."
     }
 
-    $proc = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
-    if ($proc.ExitCode -ne 0) {
-        throw "VLC 설치 실패 (exit code $($proc.ExitCode))"
+    Start-Process -FilePath $installer -ArgumentList "/S" -Wait | Out-Null
+    Start-Sleep -Seconds 2
+    if (-not (Is-VlcInstalled)) {
+        throw "VLC 설치 실패. 설치 파일을 직접 실행하거나 https://www.videolan.org/vlc/ 에서 설치하세요."
     }
 }
 
@@ -239,6 +289,31 @@ function Get-VenvPython {
     return $venvPython
 }
 
+function Remove-VenvSafe {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path $Path)) { return $true }
+
+    try {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        return -not (Test-Path $Path)
+    } catch {
+        Write-Host "   .venv 파일이 사용 중입니다. rmdir로 재시도합니다..." -ForegroundColor Yellow
+    }
+
+    cmd /c "if exist `"$Path`" rmdir /s /q `"$Path`" 2>nul" | Out-Null
+    if (-not (Test-Path $Path)) { return $true }
+
+    $backupName = ".venv.old." + [Guid]::NewGuid().ToString("N").Substring(0, 8)
+    try {
+        Rename-Item -LiteralPath $Path -NewName $backupName -ErrorAction Stop
+        Write-Host "   기존 .venv 를 $backupName 으로 이름 변경했습니다" -ForegroundColor Yellow
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 # --- 본체 ---
 
 $pythonInfo = Ensure-Python
@@ -250,13 +325,19 @@ Ensure-Ffmpeg
 
 Write-Host "==> Python 가상환경 (.venv)"
 $venvPath = Join-Path $PSScriptRoot ".venv"
+$reuseVenv = $false
 if (Test-Path $venvPath) {
-    Remove-Item -Recurse -Force $venvPath
+    if (-not (Remove-VenvSafe -Path $venvPath)) {
+        Write-Host "   기존 .venv 삭제 불가 - 패키지만 재설치합니다" -ForegroundColor Yellow
+        $reuseVenv = $true
+    }
 }
 
-& $pythonCmd @($pythonArgs + @("-m", "venv", ".venv"))
-if ($LASTEXITCODE -ne 0) {
-    throw "가상환경 생성 실패"
+if (-not $reuseVenv) {
+    & $pythonCmd @($pythonArgs + @("-m", "venv", ".venv"))
+    if ($LASTEXITCODE -ne 0) {
+        throw "가상환경 생성 실패"
+    }
 }
 
 $venvPython = Get-VenvPython
