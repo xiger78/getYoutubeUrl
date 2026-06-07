@@ -46,6 +46,19 @@ else
   # Wayland 데스크톱에서 tkinter(XWayland) 디스플레이 지정
   export DISPLAY="${DISPLAY:-:0}"
   export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+
+  # tkinter 한글 입력 (XIM — fcitx5)
+  export XMODIFIERS="${XMODIFIERS:-@im=fcitx}"
+  export GTK_IM_MODULE="${GTK_IM_MODULE:-fcitx}"
+  export QT_IM_MODULE="${QT_IM_MODULE:-fcitx}"
+  export SDL_IM_MODULE="${SDL_IM_MODULE:-fcitx}"
+
+  if command -v fcitx5 >/dev/null 2>&1 && command -v xprop >/dev/null 2>&1; then
+    if ! xprop -root XIM_SERVERS 2>/dev/null | grep -q fcitx; then
+      fcitx5 -d --replace 2>/dev/null || true
+      sleep 0.3
+    fi
+  fi
 fi
 
 exec ./.venv/bin/python getYoutubeUrl.py "$@"
