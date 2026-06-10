@@ -21,7 +21,9 @@ os.environ.setdefault("SDL_IM_MODULE", "fcitx")
 import queue
 import random
 import re
+import shutil
 import sys
+import tempfile
 import threading
 import tkinter as tk
 import webbrowser
@@ -29,6 +31,54 @@ from tkinter import filedialog, ttk
 
 import vlc
 import yt_dlp
+
+# macOS: tkinter winfo_id() 는 NSView 포인터가 아니므로 VLC 영상 임베딩이 실패한다.
+_mac_get_nsview = None
+if sys.platform == "darwin":
+    try:
+        from ctypes import cdll, c_void_p
+        from ctypes.util import find_library
+
+        def _find_libtk() -> str | None:
+            libname = f"libtk{tk.TkVersion}.dylib"
+            for prefix in (getattr(sys, "base_prefix", ""), sys.prefix):
+                if prefix:
+                    candidate = os.path.join(prefix, "lib", libname)
+                    if os.path.isfile(candidate):
+                        return candidate
+            return find_library("tk")
+
+        _libtk_path = _find_libtk()
+        if _libtk_path:
+            _libtk = cdll.LoadLibrary(_libtk_path)
+            _mac_get_nsview = _libtk.TkMacOSXGetRootControl
+            _mac_get_nsview.restype = c_void_p
+            _mac_get_nsview.argtypes = (c_void_p,)
+    except (AttributeError, OSError):
+        pass
+
+# VLC 가 직접 재생할 수 있는 단일 스트림 포맷 (video+audio merge 제외)
+AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio/best[acodec!=none]/best"
+
+# MV 재생 해상도 (라벨 → 최대 세로 픽셀)
+MV_RESOLUTIONS: dict[str, int] = {
+    "HD": 720,
+    "FHD": 1080,
+    "QHD": 1440,
+    "2K": 1440,
+    "4K": 2160,
+}
+DEFAULT_MV_RESOLUTION = "FHD"
+
+
+def mv_format(max_height: int) -> str:
+    """VLC 단일 URL 재생 불가 → ffmpeg 병합용 video+audio 포맷."""
+    h = max_height
+    return (
+        f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
+        f"bestvideo[height<={h}]+bestaudio/"
+        f"best[height<={h}]/best"
+    )
 
 try:
     import syncedlyrics
@@ -45,12 +95,6 @@ except ImportError:
 DEFAULT_RESULTS = 20   # 검색 시 기본으로 가져올 결과 수
 MAX_RESULTS = 200      # 검색 개수 입력 상한 (재생 리스트 추가 자체는 무제한)
 MP3_AUDIO_EXTS = {".mp3", ".m4a", ".flac", ".ogg", ".wav"}
-
-# MV 저장 시 yt-dlp format (팝업 재생과 동일 — 1080p 이하)
-MV_DOWNLOAD_FORMAT = (
-    "best[height<=1080][ext=mp4]/best[height<=1080]/"
-    "bestvideo[height<=1080]+bestaudio/best"
-)
 
 # 뮤직비디오 제목 판별 (MV, Official Video, 뮤직비디오 등)
 MV_TITLE_RE = re.compile(
@@ -81,16 +125,65 @@ def media_kind_label(media_type: str) -> str:
     return "🎵 노래"
 
 
+def _ytdlp_opts(**extra) -> dict:
+    opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
+    opts.update(extra)
+    return opts
+
+
+def _resolve_stream(info: dict) -> tuple[str | None, dict]:
+    """yt-dlp info 에서 VLC 재생 가능한 URL·헤더를 추출."""
+    headers = info.get("http_headers") or {}
+    url = info.get("url")
+    if url:
+        return url, headers
+    for fmt in reversed(info.get("requested_formats") or []):
+        if fmt.get("url") and fmt.get("acodec") not in (None, "none"):
+            return fmt["url"], fmt.get("http_headers") or headers
+    for fmt in reversed(info.get("requested_formats") or []):
+        if fmt.get("url"):
+            return fmt["url"], fmt.get("http_headers") or headers
+    return None, headers
+
+
+def _vlc_media(vlc_instance, stream_url: str, http_headers: dict | None = None):
+    media = vlc_instance.media_new(stream_url)
+    if http_headers:
+        for key, value in http_headers.items():
+            lk = key.lower().replace("_", "-")
+            if lk == "user-agent":
+                media.add_option(f":http-user-agent={value}")
+            elif lk in ("referer", "referrer"):
+                media.add_option(f":http-referrer={value}")
+            elif lk == "cookie":
+                media.add_option(f":http-cookies={value}")
+    return media
+
+
+def _vlc_embed_handle(widget) -> int:
+    """플랫폼별 VLC 출력 대상 핸들."""
+    wid = widget.winfo_id()
+    if sys.platform == "darwin" and _mac_get_nsview:
+        ns = _mac_get_nsview(wid)
+        if ns:
+            return ns
+    return wid
+
+
 class MvPlayerWindow(tk.Toplevel):
     """뮤직비디오 전용 팝업 재생 (초기 800×600, F11 전체화면)."""
 
     MV_WIDTH = 800
     MV_HEIGHT = 600
 
-    def __init__(self, app: YoutubeFinder, item: dict) -> None:
+    def __init__(self, app: YoutubeFinder, item: dict, max_height: int, res_label: str) -> None:
         super().__init__(app)
         self.app = app
         self.item = item
+        self.max_height = max_height
+        self.res_label = res_label
+        self.actual_height: int | None = None
+        self._tmpdir: str | None = None
         self._player = app._vlc.media_player_new()
         self.title(item.get("title", "뮤직비디오"))
         self.configure(bg="#000000")
@@ -119,38 +212,75 @@ class MvPlayerWindow(tk.Toplevel):
         threading.Thread(target=self._fetch_stream, daemon=True).start()
 
     def _fetch_stream(self) -> None:
-        opts = {
-            "quiet": True, "no_warnings": True, "noplaylist": True,
-            # Full HD(1080p) 우선 (단일 스트림 → VLC 재생 호환)
-            "format": (
-                "best[height<=1080][ext=mp4]/best[height<=1080]/"
-                "bestvideo[height<=1080]+bestaudio/best"
-            ),
-        }
+        tmpdir = tempfile.mkdtemp(prefix="getYoutubeUrl_mv_")
+        self._tmpdir = tmpdir
+        outtmpl = os.path.join(tmpdir, "video.%(ext)s")
+        title = self.item.get("title", "")
+
+        def _hook(d: dict) -> None:
+            status = d.get("status")
+            if status == "downloading":
+                pct = (d.get("_percent_str") or "").strip()
+                self.app._queue.put((
+                    "status", f"MV 다운로드 ({self.res_label}) {pct} — {title}",
+                ))
+            elif status == "finished" and d.get("postprocessor"):
+                self.app._queue.put((
+                    "status", f"MV 병합 중 ({self.res_label}) — {title}",
+                ))
+
         try:
+            opts = _ytdlp_opts(
+                format=mv_format(self.max_height),
+                merge_output_format="mp4",
+                outtmpl=outtmpl,
+                progress_hooks=[_hook],
+            )
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self.item["url"], download=False)
-            stream = info.get("url")
-            if not stream:
-                self.app._queue.put(("mv_error", self, "스트림 URL을 찾지 못했습니다."))
-                return
-            self.app._queue.put(("mv_ready", self, stream))
+                info = ydl.extract_info(self.item["url"], download=True)
+                path = ydl.prepare_filename(info)
+            if not os.path.isfile(path):
+                path = os.path.splitext(path)[0] + ".mp4"
+            if not os.path.isfile(path):
+                raise FileNotFoundError("병합된 영상 파일을 찾지 못했습니다.")
+            self.actual_height = info.get("height")
+            self.app._queue.put(("mv_ready", self, path, None))
         except Exception as exc:  # noqa: BLE001
+            self._cleanup_tmpdir()
             self.app._queue.put(("mv_error", self, str(exc)))
 
-    def embed_and_play(self, stream_url: str) -> None:
+    def embed_and_play(self, source: str, http_headers: dict | None = None) -> None:
         if not self.winfo_exists():
             return
         self.update_idletasks()
-        wid = self.video_panel.winfo_id()
+        handle = _vlc_embed_handle(self.video_panel)
         if sys.platform.startswith("linux"):
-            self._player.set_xwindow(wid)
+            self._player.set_xwindow(handle)
         elif sys.platform == "win32":
-            self._player.set_hwnd(wid)
+            self._player.set_hwnd(handle)
         elif sys.platform == "darwin":
-            self._player.set_nsobject(wid)
-        self._player.set_media(self.app._vlc.media_new(stream_url))
+            self._player.set_nsobject(handle)
+        if os.path.isfile(source):
+            media = self.app._vlc.media_new_path(source)
+        else:
+            media = _vlc_media(self.app._vlc, source, http_headers)
+        self._player.set_media(media)
         self._player.play()
+        if sys.platform == "darwin":
+            self._wiggle_video_panel()
+
+    def _wiggle_video_panel(self, delta: int = 4) -> None:
+        """macOS 에서 VLC 영상이 패널에 맞게 그려지도록 크기를 살짝 조정."""
+        if not self.winfo_exists() or self.attributes("-fullscreen"):
+            return
+        panel = self.video_panel
+        w, h = panel.winfo_width(), panel.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        panel.config(width=w + delta, height=h)
+        self.after(100, lambda: panel.config(width=w, height=h) if self.winfo_exists() else None)
+        if delta > 1:
+            self.after(120, lambda: self._wiggle_video_panel(delta - 1))
 
     def _on_escape(self, _evt=None) -> None:
         if self.attributes("-fullscreen"):
@@ -162,12 +292,22 @@ class MvPlayerWindow(tk.Toplevel):
         cur = self.attributes("-fullscreen")
         self.attributes("-fullscreen", not cur)
 
+    def _cleanup_tmpdir(self) -> None:
+        tmpdir = self._tmpdir
+        self._tmpdir = None
+        if tmpdir and os.path.isdir(tmpdir):
+            try:
+                shutil.rmtree(tmpdir)
+            except OSError:
+                pass
+
     def close(self) -> None:
         try:
             self._player.stop()
             self._player.release()
         except Exception:  # noqa: BLE001
             pass
+        self._cleanup_tmpdir()
         if self.winfo_exists():
             self.destroy()
         if self.app._mv_window is self:
@@ -196,6 +336,7 @@ class YoutubeFinder(tk.Tk):
         self._kar_creating: bool = False
         self._mv_window: MvPlayerWindow | None = None
         self._search_mode = tk.StringVar(value="song")
+        self._mv_resolution = tk.StringVar(value=DEFAULT_MV_RESOLUTION)
         self.mp3_folder: str = ""
         self.mp3_files: list[dict] = []
         self.mp3_current: int = -1
@@ -334,6 +475,12 @@ class YoutubeFinder(tk.Tk):
         ttk.Button(rbtn, text="🎬 MV 재생", command=self.play_selected_mv_from_results).pack(
             side="left", padx=3,
         )
+        tk.Label(rbtn, text="해상도", bg="#0f172a", fg="#cbd5e1").pack(side="left", padx=(8, 2))
+        self.mv_res_combo = ttk.Combobox(
+            rbtn, textvariable=self._mv_resolution,
+            values=list(MV_RESOLUTIONS), state="readonly", width=5,
+        )
+        self.mv_res_combo.pack(side="left", padx=3)
         ttk.Button(rbtn, text="브라우저로 열기", command=self.open_selected_result).pack(side="left", padx=3)
 
         # 재생 리스트
@@ -368,7 +515,7 @@ class YoutubeFinder(tk.Tk):
         self.save_mv_btn = ttk.Button(dlbtn, text="⬇ 선택 MV 저장",
                                       command=self.save_selected_mv)
         self.save_mv_btn.pack(side="left", padx=3)
-        self.save_mv_all_btn = ttk.Button(dlbtn, text="⬇ MV 저장 (전체)",
+        self.save_mv_all_btn = ttk.Button(dlbtn, text="⬇ MV 다운로드 (전체)",
                                          command=self.save_all_mv)
         self.save_mv_all_btn.pack(side="left", padx=3)
         self.kar_one_btn = ttk.Button(dlbtn, text="선택곡 MIDI파일 생성",
@@ -517,9 +664,15 @@ class YoutubeFinder(tk.Tk):
                     self._show_results(msg[1], msg[2] if len(msg) > 2 else "song")
                 elif kind == "mv_ready":
                     win, stream = msg[1], msg[2]
+                    headers = msg[3] if len(msg) > 3 else None
                     if win.winfo_exists():
-                        win.embed_and_play(stream)
-                        self.status.config(text=f"🎬 MV 재생: {win.item.get('title', '')}")
+                        win.embed_and_play(stream, headers)
+                        res = win.res_label
+                        if win.actual_height:
+                            res = f"{win.res_label} {win.actual_height}p"
+                        self.status.config(
+                            text=f"🎬 MV 재생 ({res}): {win.item.get('title', '')}",
+                        )
                 elif kind == "mv_error":
                     win, err = msg[1], msg[2]
                     self.status.config(text=f"MV 재생 실패: {err}")
@@ -534,7 +687,8 @@ class YoutubeFinder(tk.Tk):
                 elif kind == "play":
                     self._loading = False
                     stream, title = msg[1], msg[2]
-                    self._player.set_media(self._vlc.media_new(stream))
+                    headers = msg[3] if len(msg) > 3 else None
+                    self._player.set_media(_vlc_media(self._vlc, stream, headers))
                     self._player.play()
                     self.status.config(text=f"▶ 재생 중: {title}")
                 elif kind == "mp3_scan_done":
@@ -551,10 +705,15 @@ class YoutubeFinder(tk.Tk):
                 elif kind == "save_done":
                     ok, total, folder = msg[1], msg[2], msg[3]
                     save_kind = msg[4] if len(msg) > 4 else "mp3"
+                    res_label = msg[5] if len(msg) > 5 else None
                     self._saving = False
                     self._set_save_buttons_state(True)
-                    label = "MP3" if save_kind == "mp3" else "MV"
-                    unit = "곡" if save_kind == "mp3" else "MV"
+                    if save_kind == "mp3":
+                        label = "MP3"
+                        unit = "곡"
+                    else:
+                        label = f"MV ({res_label})" if res_label else "MV"
+                        unit = "MV"
                     self.status.config(text=f"{label} 저장 완료: {ok}/{total}{unit} → {folder}")
                 elif kind == "kar_done":
                     ok, total, folder = msg[1], msg[2], msg[3]
@@ -619,13 +778,22 @@ class YoutubeFinder(tk.Tk):
             return
         self._open_mv_player(item)
 
+    def _mv_max_height(self) -> int:
+        label = self._mv_resolution.get()
+        if label not in MV_RESOLUTIONS:
+            label = DEFAULT_MV_RESOLUTION
+            self._mv_resolution.set(label)
+        return MV_RESOLUTIONS[label]
+
     def _open_mv_player(self, item: dict) -> None:
         if self._mv_window and self._mv_window.winfo_exists():
             self._mv_window.close()
         self._player.stop()
         self._loading = False
-        self.status.config(text=f"MV 불러오는 중: {item['title']} …")
-        self._mv_window = MvPlayerWindow(self, item)
+        res_label = self._mv_resolution.get()
+        max_height = self._mv_max_height()
+        self.status.config(text=f"MV 준비 중 ({res_label}): {item['title']} …")
+        self._mv_window = MvPlayerWindow(self, item, max_height, res_label)
 
     def _on_playlist_double(self, _evt) -> None:
         idx = self._plist_index()
@@ -925,18 +1093,14 @@ class YoutubeFinder(tk.Tk):
         self._fetch_lyrics(item)
 
     def _play_worker(self, item: dict) -> None:
-        opts = {
-            "quiet": True, "no_warnings": True, "format": "bestaudio/best",
-            "noplaylist": True,
-        }
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            with yt_dlp.YoutubeDL(_ytdlp_opts(format=AUDIO_FORMAT)) as ydl:
                 info = ydl.extract_info(item["url"], download=False)
-            stream = info.get("url")
+            stream, headers = _resolve_stream(info)
             if not stream:
                 self._queue.put(("play_error", "스트림 URL을 찾지 못했습니다."))
                 return
-            self._queue.put(("play", stream, item["title"]))
+            self._queue.put(("play", stream, item["title"], headers))
         except Exception as exc:  # noqa: BLE001
             self._queue.put(("play_error", str(exc)))
 
@@ -1143,46 +1307,64 @@ class YoutubeFinder(tk.Tk):
     def _start_mv_download(self, items: list[dict]) -> None:
         if self._saving:
             return
-        folder = filedialog.askdirectory(title="MV 영상을 저장할 폴더 선택")
+        res_label = self._mv_resolution.get()
+        max_height = self._mv_max_height()
+        folder = filedialog.askdirectory(
+            title=f"뮤직비디오 MP4 저장 ({res_label}) — 폴더 선택",
+        )
         if not folder:
             return
         self._saving = True
         self._set_save_buttons_state(False)
         threading.Thread(
-            target=self._save_worker, args=(folder, items, "mv"), daemon=True,
+            target=self._save_worker,
+            args=(folder, items, "mv", max_height, res_label),
+            daemon=True,
         ).start()
 
-    def _save_worker(self, folder: str, items: list[dict], save_kind: str) -> None:
+    def _save_worker(
+        self,
+        folder: str,
+        items: list[dict],
+        save_kind: str,
+        max_height: int = 1080,
+        res_label: str = "",
+    ) -> None:
         total = len(items)
         ok = 0
         is_mv = save_kind == "mv"
         for i, item in enumerate(items, 1):
-            label = "MV" if is_mv else "MP3"
-            self._queue.put(("status", f"{label} 저장 중 ({i}/{total}): {item['title']} …"))
-            opts: dict = {
-                "quiet": True, "no_warnings": True, "noplaylist": True,
-                "outtmpl": os.path.join(folder, "%(title)s.%(ext)s"),
-            }
             if is_mv:
-                opts["format"] = MV_DOWNLOAD_FORMAT
-                opts["merge_output_format"] = "mp4"
+                label = f"MV ({res_label})"
+            else:
+                label = "MP3"
+            self._queue.put(("status", f"{label} 저장 중 ({i}/{total}): {item['title']} …"))
+            if is_mv:
+                opts = _ytdlp_opts(
+                    format=mv_format(max_height),
+                    merge_output_format="mp4",
+                    outtmpl=os.path.join(folder, "%(title)s.%(ext)s"),
+                )
             else:
                 url = item.get("url")
                 if not url:
                     continue
-                opts["format"] = "bestaudio/best"
-                opts["postprocessors"] = [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }]
+                opts = _ytdlp_opts(
+                    format="bestaudio/best",
+                    outtmpl=os.path.join(folder, "%(title)s.%(ext)s"),
+                    postprocessors=[{
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }],
+                )
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([item["url"]])
                 ok += 1
             except Exception:  # noqa: BLE001
                 pass
-        self._queue.put(("save_done", ok, total, folder, save_kind))
+        self._queue.put(("save_done", ok, total, folder, save_kind, res_label if is_mv else None))
 
     # ---------------- KAR MIDI 생성 ----------------
     def create_kar_from_playlist(self) -> None:
