@@ -852,10 +852,25 @@ class YoutubeFinder(tk.Tk):
         item = self._selected_result_item()
         if not item:
             return
+        self.play_search_result_item(item)
+
+    def play_search_result_item(self, item: dict) -> None:
+        """검색 결과에서 바로 재생 (재생 리스트 추가 없음)."""
+        self.current = -1
+        self._active_list = "playlist"
         if item.get("media_type") == "mv":
             self._open_mv_player(item)
-        else:
-            self.add_to_playlist()
+            self._fetch_lyrics(item)
+            return
+        if self._loading:
+            return
+        if self._mv_window and self._mv_window.winfo_exists():
+            self._mv_window.close()
+        self._player.stop()
+        self._loading = True
+        self.status.config(text=self.t("status_loading", title=item["title"]))
+        threading.Thread(target=self._play_worker, args=(item,), daemon=True).start()
+        self._fetch_lyrics(item)
 
     def play_selected_mv_from_results(self) -> None:
         item = self._selected_result_item()

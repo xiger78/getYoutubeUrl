@@ -31,7 +31,8 @@ Choose **song search** or **music video search**; MVs play in an **800×600 popu
 
 - **🎵 Song search** / **🎬 Music video** modes (default 20 results, max 200)
 - **Type** labels in results and playlist (`🎵 Song` / `🎬 MV` / `💾 Local`)
-- **Unlimited playlist accumulation** from multiple searches (duplicate URLs skipped)
+- **Double-click search results** to play immediately (song · MV, not added to playlist)
+- **Unlimited playlist accumulation** via **Add ↓** (duplicate URLs skipped)
 - **Songs**: libVLC audio streaming in the main window
 - **MVs**: separate **popup** (800×600) at HD–4K, F11 fullscreen
 - Right panel **lyrics** via syncedlyrics
@@ -180,12 +181,12 @@ Left (search, lists, controls) + right (lyrics, 320px). **Status bar** at the bo
 
 | Button / action | Function |
 |-----------------|----------|
-| **Add ↓** | Add to playlist (skip duplicate URLs) |
-| **🎬 Play MV** | Play MV in popup |
+| **Add ↓** | Add to playlist (skip duplicate URLs). **Use this button only for playlist add** |
+| **🎬 Play MV** | Play selected MV in popup |
 | **Resolution** | Max MV play/save resolution (HD / FHD / QHD / 2K / 4K) |
 | **Open in browser** | Open YouTube in default browser |
 | **Language** | Switch UI language |
-| **Double-click** | Song → add / MV → play MV |
+| **Double-click** | **Play immediately** (song · MV). Does not add to playlist |
 
 ### Playlist
 
@@ -282,6 +283,11 @@ Shows lyrics for the playing track via `syncedlyrics` (scrollable).
 - **MV mode:** `ytsearch{N}:query official mv` — MV-first
 - `extract_flat` for metadata only
 
+### Search result play vs add
+
+- **Double-click**: play immediately without adding to playlist (song in main window, MV in popup)
+- **Add ↓**: add to playlist only (does not start playback)
+
 ### Playlist
 
 - In-memory `list[dict]`, unlimited tracks, duplicate URL prevention
@@ -340,6 +346,7 @@ Shows lyrics for the playing track via `syncedlyrics` (scrollable).
 | v13 | Windows bat/ps1 split |
 | v14 | UI i18n (ja/zh/ko/en), resolution, local MP3 |
 | v15 | Folder-wide KAR MIDI, UI button cleanup |
+| v16 | Search result double-click plays immediately; playlist add via **Add ↓** only |
 
 ---
 
