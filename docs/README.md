@@ -65,3 +65,24 @@ pkill -f getYoutubeUrl.py
 ```
 
 See each [manual](manual_ja.md) for the full command reference.
+
+---
+
+## Install file build (설치 파일 만들기)
+
+PyInstaller로 앱을 묶고, 플랫폼별 설치 파일을 `dist/`에 생성합니다.
+
+| OS | Build command | Output |
+|----|---------------|--------|
+| macOS (Intel / Apple Silicon) | `./scripts/build/build-mac.sh` | `dist/getYoutubeUrl-<ver>-mac-<arch>.dmg` |
+| Windows | `.\scripts\build\build-windows.ps1` | `dist/getYoutubeUrl-<ver>-win64-setup.exe` (Inno Setup) or `.zip` |
+| Linux (Debian/Ubuntu/RPi) | `./scripts/build/build-linux.sh [amd64\|arm64]` | `dist/getYoutubeUrl_<ver>_<arch>.deb` |
+
+macOS DMG에는 **Universal VLC**와 **ffmpeg**가 포함됩니다. Windows 빌드는 VLC·ffmpeg portable을 함께 번들합니다. Linux `.deb`는 `python3-tk`, `vlc`, `ffmpeg` apt 의존성을 사용합니다.
+
+Windows Inno Setup 6: https://jrsoftware.org/isinfo.php (없으면 ZIP으로 대체)
+
+```bash
+# 현재 OS 자동 선택
+./scripts/build/build.sh
+```

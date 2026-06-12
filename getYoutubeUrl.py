@@ -29,6 +29,10 @@ import tkinter as tk
 import webbrowser
 from tkinter import filedialog, ttk
 
+from runtime_env import configure_runtime
+
+configure_runtime()
+
 import vlc
 import yt_dlp
 

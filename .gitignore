@@ -12,3 +12,9 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# 빌드 산출물
+/build/
+/dist/
+*.dmg
+*.deb
