@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-DEFAULT_LANG = "ko"
+DEFAULT_LANG = "ja"
 
-LANG_OPTIONS = ("한국어", "日本語", "中文", "English")
+LANG_OPTIONS = ("日本語", "中文", "한국어", "English")
 
 LANG_MAP: dict[str, str] = {
     "한국어": "ko",
