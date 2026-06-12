@@ -200,10 +200,10 @@ def render(lang_code: str, out_path: str) -> None:
     headers = [t("col_no"), t("col_kind"), t("col_title"), t("col_channel"), t("col_dur")]
     _table(draw, 16, y, left_w - 32, 26 + 26 * 3, headers, demo["results"], f_norm, f_sm)
 
-    # Result buttons
+    # Result buttons (no delete)
     y += 26 + 26 * 3 + 8
     bx = 16
-    for key in ("add", "delete", "mv_play"):
+    for key in ("add", "mv_play"):
         bx += _btn(draw, bx, y, t(key), f_sm) + 6
     draw.text((bx + 8, y + 6), t("resolution"), fill="#cbd5e1", font=f_sm)
     draw.rectangle((bx + 58, y + 2, bx + 108, y + 26), fill=ENTRY_BG, outline="#475569")
@@ -220,11 +220,14 @@ def render(lang_code: str, out_path: str) -> None:
     y += 22
     _table(draw, 16, y, left_w - 32, 26 + 26, headers, demo["playlist"], f_norm, f_sm, sel_row=0)
 
-    # Download buttons
+    # Playlist download / clear buttons
     y += 26 + 26 + 8
     bx = 16
-    for key in ("save_mp3_all", "save_mp3_sel", "save_mv_sel", "save_mv_all"):
-        bx += _btn(draw, bx, y, t(key), f_sm) + 4
+    for key in (
+        "save_mp3_all", "save_mp3_sel", "save_mv_all",
+        "save_mv_sel", "kar_create", "clear_pl_list",
+    ):
+        bx += _btn(draw, bx, y, t(key), f_sm) + 3
 
     # Local MP3
     y += 36
@@ -242,15 +245,14 @@ def render(lang_code: str, out_path: str) -> None:
         draw.text((cx + 6, y + 5), hdr, fill="#f8fafc", font=f_sm)
         cx += cw
 
-    # Playback controls
+    # Playback controls (single row)
     y += 62
     bx = 16
-    for key in ("play", "pause", "stop", "next", "shuffle"):
-        bx += _btn(draw, bx, y, t(key), f_sm) + 4
+    for key in ("play", "delete", "clear_pl", "shuffle"):
+        bx += _btn(draw, bx, y, t(key), f_sm) + 3
     _btn(draw, bx, y, t("shuffle_off"), f_sm, 90)
     bx += 96
-    for key in ("delete", "clear_pl", "copy_urls"):
-        bx += _btn(draw, bx, y, t(key), f_sm) + 4
+    _btn(draw, bx, y, t("copy_urls"), f_sm)
 
     # Status bar
     draw.rectangle((0, H - 24, W, H), fill=BG)

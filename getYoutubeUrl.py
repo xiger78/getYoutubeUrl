@@ -550,8 +550,6 @@ class YoutubeFinder(tk.Tk):
         rbtn.pack(fill="x", padx=16, pady=(0, 6))
         self._ui["btn_add"] = ttk.Button(rbtn, text="", command=self.add_to_playlist)
         self._ui["btn_add"].pack(side="left", padx=3)
-        self._ui["btn_delete_r"] = ttk.Button(rbtn, text="", command=self.remove_selected)
-        self._ui["btn_delete_r"].pack(side="left", padx=3)
         self._ui["btn_mv_play"] = ttk.Button(rbtn, text="", command=self.play_selected_mv_from_results)
         self._ui["btn_mv_play"].pack(side="left", padx=3)
         self._ui["lbl_resolution"] = tk.Label(rbtn, text="", bg="#0f172a", fg="#cbd5e1")
@@ -588,6 +586,7 @@ class YoutubeFinder(tk.Tk):
             self.plist.column(c, width=w, anchor=anc, stretch=st)
         self.plist.pack(side="left", fill="both", expand=True)
         self.plist.bind("<Double-1>", self._on_playlist_double)
+        self.plist.bind("<FocusIn>", lambda _e: setattr(self, "_active_list", "playlist"))
         psb = ttk.Scrollbar(pl, orient="vertical", command=self.plist.yview)
         psb.pack(side="right", fill="y")
         self.plist.config(yscrollcommand=psb.set)
@@ -601,17 +600,19 @@ class YoutubeFinder(tk.Tk):
         self.save_one_btn = ttk.Button(dlbtn, text="", command=self.save_selected_mp3)
         self._ui["btn_save_mp3_sel"] = self.save_one_btn
         self.save_one_btn.pack(side="left", padx=3)
-        self.save_mv_btn = ttk.Button(dlbtn, text="", command=self.save_selected_mv)
-        self._ui["btn_save_mv_sel"] = self.save_mv_btn
-        self.save_mv_btn.pack(side="left", padx=3)
         self.save_mv_all_btn = ttk.Button(dlbtn, text="", command=self.save_all_mv)
         self._ui["btn_save_mv_all"] = self.save_mv_all_btn
         self.save_mv_all_btn.pack(side="left", padx=3)
+        self.save_mv_btn = ttk.Button(dlbtn, text="", command=self.save_selected_mv)
+        self._ui["btn_save_mv_sel"] = self.save_mv_btn
+        self.save_mv_btn.pack(side="left", padx=3)
         self.kar_one_btn = ttk.Button(dlbtn, text="", command=self.create_kar_from_playlist)
         self._ui["btn_kar_create"] = self.kar_one_btn
         self.kar_one_btn.pack(side="left", padx=3)
         if not _HAS_KAR:
             self.kar_one_btn.config(state="disabled")
+        self._ui["btn_clear_pl_list"] = ttk.Button(dlbtn, text="", command=self.clear_playlist)
+        self._ui["btn_clear_pl_list"].pack(side="left", padx=3)
 
         # 로컬 MP3 폴더
         mp3_hdr = tk.Frame(left, bg="#0f172a")
@@ -630,8 +631,9 @@ class YoutubeFinder(tk.Tk):
             side="right", padx=3,
         )
 
-        mp3f = tk.Frame(left, bg="#0f172a")
+        mp3f = tk.Frame(left, bg="#0f172a", height=130)
         mp3f.pack(fill="both", expand=True, padx=16, pady=(2, 4))
+        mp3f.pack_propagate(False)
         mcols = ("no", "title", "dur")
         self.mp3_tree = ttk.Treeview(mp3f, columns=mcols, show="headings", selectmode="browse", height=5)
         for c, w, anc, st in (
@@ -640,39 +642,24 @@ class YoutubeFinder(tk.Tk):
             self.mp3_tree.column(c, width=w, anchor=anc, stretch=st)
         self.mp3_tree.pack(side="left", fill="both", expand=True)
         self.mp3_tree.bind("<Double-1>", self._on_mp3_double)
+        self.mp3_tree.bind("<FocusIn>", lambda _e: setattr(self, "_active_list", "mp3"))
         msb = ttk.Scrollbar(mp3f, orient="vertical", command=self.mp3_tree.yview)
         msb.pack(side="right", fill="y")
         self.mp3_tree.config(yscrollcommand=msb.set)
 
-        mp3btn = tk.Frame(left, bg="#0f172a")
-        mp3btn.pack(fill="x", padx=16, pady=(0, 6))
-        self._ui["btn_mp3_play"] = ttk.Button(mp3btn, text="", command=self.play_selected_mp3)
-        self._ui["btn_mp3_play"].pack(side="left", padx=3)
-        self._ui["btn_add_all_mp3"] = ttk.Button(mp3btn, text="", command=self.add_all_mp3_to_playlist)
-        self._ui["btn_add_all_mp3"].pack(side="left", padx=3)
-        self._ui["btn_del_mp3"] = ttk.Button(mp3btn, text="", command=self.remove_mp3_from_list)
-        self._ui["btn_del_mp3"].pack(side="left", padx=3)
-
-        # 재생 컨트롤
-        pbtn = tk.Frame(left, bg="#0f172a")
-        pbtn.pack(fill="x", padx=16, pady=(0, 4))
-        self._ui["btn_play"] = ttk.Button(pbtn, text="", command=self.play_selected)
+        ctrl = tk.Frame(left, bg="#0f172a")
+        ctrl.pack(fill="x", padx=16, pady=(0, 6))
+        self._ui["btn_play"] = ttk.Button(ctrl, text="", command=self.play_selected)
         self._ui["btn_play"].pack(side="left", padx=3)
-        self._ui["btn_pause"] = ttk.Button(pbtn, text="", command=self.toggle_pause)
-        self._ui["btn_pause"].pack(side="left", padx=3)
-        self._ui["btn_stop"] = ttk.Button(pbtn, text="", command=self.stop)
-        self._ui["btn_stop"].pack(side="left", padx=3)
-        self._ui["btn_next"] = ttk.Button(pbtn, text="", command=self.play_next)
-        self._ui["btn_next"].pack(side="left", padx=3)
-        self._ui["btn_shuffle"] = ttk.Button(pbtn, text="", command=self.play_random)
-        self._ui["btn_shuffle"].pack(side="left", padx=3)
-        self.shuffle_btn = ttk.Button(pbtn, text="", width=9, command=self.toggle_shuffle)
-        self.shuffle_btn.pack(side="left", padx=3)
-        self._ui["btn_delete_pl"] = ttk.Button(pbtn, text="", command=self.remove_selected)
-        self._ui["btn_delete_pl"].pack(side="left", padx=3)
-        self._ui["btn_clear_pl"] = ttk.Button(pbtn, text="", command=self.clear_playlist)
+        self._ui["btn_delete"] = ttk.Button(ctrl, text="", command=self.remove_playback_selection)
+        self._ui["btn_delete"].pack(side="left", padx=3)
+        self._ui["btn_clear_pl"] = ttk.Button(ctrl, text="", command=self.clear_playback_all)
         self._ui["btn_clear_pl"].pack(side="left", padx=3)
-        self._ui["btn_copy_urls"] = ttk.Button(pbtn, text="", command=self.copy_all)
+        self._ui["btn_shuffle"] = ttk.Button(ctrl, text="", command=self.play_random)
+        self._ui["btn_shuffle"].pack(side="left", padx=3)
+        self.shuffle_btn = ttk.Button(ctrl, text="", width=9, command=self.toggle_shuffle)
+        self.shuffle_btn.pack(side="left", padx=3)
+        self._ui["btn_copy_urls"] = ttk.Button(ctrl, text="", command=self.copy_all)
         self._ui["btn_copy_urls"].pack(side="left", padx=3)
 
         self._apply_ui_language()
@@ -758,72 +745,78 @@ class YoutubeFinder(tk.Tk):
         try:
             while True:
                 msg = self._queue.get_nowait()
-                kind = msg[0]
-                if kind == "results":
-                    self._show_results(msg[1], msg[2] if len(msg) > 2 else "song")
-                elif kind == "mv_ready":
-                    win, stream = msg[1], msg[2]
-                    headers = msg[3] if len(msg) > 3 else None
-                    if win.winfo_exists():
-                        win.embed_and_play(stream, headers)
-                        res = win.res_label
-                        if win.actual_height:
-                            res = f"{win.res_label} {win.actual_height}p"
-                        self.status.config(text=self.t("status_mv_play", res=res, title=win.item.get("title", "")))
-                elif kind == "mv_error":
-                    win, err = msg[1], msg[2]
-                    self.status.config(text=self.t("status_mv_fail", err=err))
-                    if win.winfo_exists():
-                        win.close()
-                elif kind == "error":
-                    self._searching = False
-                    self.search_btn.config(state="normal")
-                    self.status.config(text=self.t("status_error", err=msg[1]))
-                elif kind == "status":
-                    self.status.config(text=msg[1])
-                elif kind == "play":
-                    self._loading = False
-                    stream, title = msg[1], msg[2]
-                    headers = msg[3] if len(msg) > 3 else None
-                    self._player.set_media(_vlc_media(self._vlc, stream, headers))
-                    self._player.play()
-                    self.status.config(text=self.t("status_playing", title=title))
-                elif kind == "mp3_scan_done":
-                    self._show_mp3_files(msg[1], msg[2])
-                elif kind == "mp3_durations":
-                    self._update_mp3_durations(msg[1])
-                elif kind == "play_error":
-                    self._loading = False
-                    self.status.config(text=self.t("status_play_fail", err=msg[1]))
-                elif kind == "lyrics":
-                    seq, title, lrc = msg[1], msg[2], msg[3]
-                    if seq == self._lyrics_seq:  # 최신 요청만 반영
-                        self._set_lyrics(title, lrc or self.t("lyrics_not_found"))
-                elif kind == "save_done":
-                    ok, total, folder = msg[1], msg[2], msg[3]
-                    save_kind = msg[4] if len(msg) > 4 else "mp3"
-                    res_label = msg[5] if len(msg) > 5 else None
-                    self._saving = False
-                    self._set_save_buttons_state(True)
-                    if save_kind == "mp3":
-                        label = "MP3"
-                        unit = self.t("unit_song")
-                    else:
-                        label = f"MV ({res_label})" if res_label else "MV"
-                        unit = self.t("unit_mv")
-                    self.status.config(text=self.t("status_save_done", label=label, ok=ok, total=total, unit=unit, folder=folder))
-                elif kind == "kar_done":
-                    ok, total, folder = msg[1], msg[2], msg[3]
-                    self._kar_creating = False
-                    self.kar_one_btn.config(state="normal")
-                    self.status.config(text=self.t("status_kar_done", ok=ok, total=total, folder=folder))
-                elif kind == "kar_error":
-                    self._kar_creating = False
-                    self.kar_one_btn.config(state="normal")
-                    self.status.config(text=self.t("status_kar_fail", err=msg[1]))
+                try:
+                    self._handle_queue_message(msg)
+                except Exception as exc:  # noqa: BLE001
+                    self.status.config(text=self.t("status_error", err=str(exc)))
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
+
+    def _handle_queue_message(self, msg: tuple) -> None:
+        kind = msg[0]
+        if kind == "results":
+            self._show_results(msg[1], msg[2] if len(msg) > 2 else "song")
+        elif kind == "mv_ready":
+            win, stream = msg[1], msg[2]
+            headers = msg[3] if len(msg) > 3 else None
+            if win.winfo_exists():
+                win.embed_and_play(stream, headers)
+                res = win.res_label
+                if win.actual_height:
+                    res = f"{win.res_label} {win.actual_height}p"
+                self.status.config(text=self.t("status_mv_play", res=res, title=win.item.get("title", "")))
+        elif kind == "mv_error":
+            win, err = msg[1], msg[2]
+            self.status.config(text=self.t("status_mv_fail", err=err))
+            if win.winfo_exists():
+                win.close()
+        elif kind == "error":
+            self._searching = False
+            self.search_btn.config(state="normal")
+            self.status.config(text=self.t("status_error", err=msg[1]))
+        elif kind == "status":
+            self.status.config(text=msg[1])
+        elif kind == "play":
+            self._loading = False
+            stream, title = msg[1], msg[2]
+            headers = msg[3] if len(msg) > 3 else None
+            self._player.set_media(_vlc_media(self._vlc, stream, headers))
+            self._player.play()
+            self.status.config(text=self.t("status_playing", title=title))
+        elif kind == "mp3_scan_done":
+            self._show_mp3_files(msg[1], msg[2])
+        elif kind == "mp3_durations":
+            self._update_mp3_durations(msg[1])
+        elif kind == "play_error":
+            self._loading = False
+            self.status.config(text=self.t("status_play_fail", err=msg[1]))
+        elif kind == "lyrics":
+            seq, title, lrc = msg[1], msg[2], msg[3]
+            if seq == self._lyrics_seq:  # 최신 요청만 반영
+                self._set_lyrics(title, lrc or self.t("lyrics_not_found"))
+        elif kind == "save_done":
+            ok, total, folder = msg[1], msg[2], msg[3]
+            save_kind = msg[4] if len(msg) > 4 else "mp3"
+            res_label = msg[5] if len(msg) > 5 else None
+            self._saving = False
+            self._set_save_buttons_state(True)
+            if save_kind == "mp3":
+                label = "MP3"
+                unit = self.t("unit_song")
+            else:
+                label = f"MV ({res_label})" if res_label else "MV"
+                unit = self.t("unit_mv")
+            self.status.config(text=self.t("status_save_done", label=label, ok=ok, total=total, unit=unit, folder=folder))
+        elif kind == "kar_done":
+            ok, total, folder = msg[1], msg[2], msg[3]
+            self._kar_creating = False
+            self.kar_one_btn.config(state="normal")
+            self.status.config(text=self.t("status_kar_done", ok=ok, total=total, folder=folder))
+        elif kind == "kar_error":
+            self._kar_creating = False
+            self.kar_one_btn.config(state="normal")
+            self.status.config(text=self.t("status_kar_fail", err=msg[1]))
 
     def _refresh_search_results(self, select_idx: int | None = None) -> None:
         self.tree.delete(*self.tree.get_children())
@@ -842,8 +835,7 @@ class YoutubeFinder(tk.Tk):
         self.results = items
         self._refresh_search_results(0)
         if items:
-            if mode == "mv":
-                key = "status_results_mv" if mode == "mv" else "status_results_song"
+            key = "status_results_mv" if mode == "mv" else "status_results_song"
             self.status.config(text=self.t(key, n=len(items)))
         else:
             self.status.config(text=self.t("status_no_results"))
@@ -902,7 +894,7 @@ class YoutubeFinder(tk.Tk):
 
     # ---------------- 로컬 MP3 폴더 ----------------
     def pick_mp3_folder(self) -> None:
-        folder = filedialog.askdirectory(title=self.t("dlg_mp3_folder"))
+        folder = filedialog.askdirectory(title=self.t("dlg_mp3_folder"), parent=self)
         if not folder:
             return
         self.mp3_folder = folder
@@ -918,36 +910,41 @@ class YoutubeFinder(tk.Tk):
         self.status.config(text=self.t("status_mp3_scan", folder=folder))
         threading.Thread(target=self._scan_mp3_folder_worker, args=(folder,), daemon=True).start()
 
-    @staticmethod
-    def _scan_mp3_folder(folder: str) -> list[dict]:
+    def _scan_mp3_folder(self, folder: str) -> list[dict]:
         items: list[dict] = []
+        channel = self.t("channel_local")
         try:
-            names = sorted(os.listdir(folder), key=str.lower)
+            for root, _dirs, files in os.walk(folder):
+                for name in sorted(files, key=str.lower):
+                    ext = os.path.splitext(name)[1].lower()
+                    if ext not in MP3_AUDIO_EXTS:
+                        continue
+                    path = os.path.join(root, name)
+                    if not os.path.isfile(path):
+                        continue
+                    rel = os.path.relpath(path, folder)
+                    items.append({
+                        "title": os.path.splitext(rel)[0],
+                        "path": path,
+                        "channel": channel,
+                        "duration": None,
+                        "media_type": "local",
+                    })
         except OSError:
             return items
-        for name in names:
-            ext = os.path.splitext(name)[1].lower()
-            if ext not in MP3_AUDIO_EXTS:
-                continue
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path):
-                continue
-            items.append({
-                "title": os.path.splitext(name)[0],
-                "path": path,
-                "channel": self.t("channel_local"),
-                "duration": None,
-                "media_type": "local",
-            })
+        items.sort(key=lambda it: it["title"].lower())
         return items
 
     def _scan_mp3_folder_worker(self, folder: str) -> None:
-        items = self._scan_mp3_folder(folder)
-        self._queue.put(("mp3_scan_done", folder, items))
-        if items:
-            self._queue.put(("status", self.t("status_mp3_probe", n=len(items))))
-            durations = self._probe_durations(items)
-            self._queue.put(("mp3_durations", durations))
+        try:
+            items = self._scan_mp3_folder(folder)
+            self._queue.put(("mp3_scan_done", folder, items))
+            if items:
+                self._queue.put(("status", self.t("status_mp3_probe", n=len(items))))
+                durations = self._probe_durations(items)
+                self._queue.put(("mp3_durations", durations))
+        except Exception as exc:  # noqa: BLE001
+            self._queue.put(("status", self.t("status_error", err=str(exc))))
 
     @staticmethod
     def _probe_durations(items: list[dict]) -> dict[str, int | None]:
@@ -1004,16 +1001,6 @@ class YoutubeFinder(tk.Tk):
         if idx is not None:
             self.play_mp3_index(idx)
 
-    def play_selected_mp3(self) -> None:
-        idx = self._mp3_index()
-        if idx is None:
-            if self.mp3_files:
-                idx = 0
-            else:
-                self.status.config(text=self.t("status_pick_mp3_folder"))
-                return
-        self.play_mp3_index(idx)
-
     def play_mp3_index(self, idx: int) -> None:
         if not (0 <= idx < len(self.mp3_files)):
             return
@@ -1037,17 +1024,6 @@ class YoutubeFinder(tk.Tk):
             self.status.config(text=self.t("status_pick_mp3_add"))
             return
         self._append_local_item(self.mp3_files[idx])
-
-    def add_all_mp3_to_playlist(self) -> None:
-        if not self.mp3_files:
-            self.status.config(text=self.t("status_no_mp3_add"))
-            return
-        added = 0
-        for it in self.mp3_files:
-            if self._append_local_item(it, refresh=False):
-                added += 1
-        self._refresh_playlist()
-        self.status.config(text=self.t("status_mp3_added", n=added))
 
     def remove_mp3_from_list(self) -> None:
         idx = self._mp3_index()
@@ -1110,6 +1086,14 @@ class YoutubeFinder(tk.Tk):
         self._refresh_playlist()
         self.status.config(text=self.t("status_added", title=item["title"]))
 
+    def remove_playback_selection(self) -> None:
+        if self._plist_index() is not None:
+            self.remove_selected()
+        elif self._mp3_index() is not None:
+            self.remove_mp3_from_list()
+        else:
+            self.status.config(text=self.t("status_pick_delete_pl"))
+
     def remove_selected(self) -> None:
         idx = self._plist_index()
         if idx is None:
@@ -1125,6 +1109,16 @@ class YoutubeFinder(tk.Tk):
         self._refresh_playlist()
         self.status.config(text=self.t("status_deleted", title=title))
 
+    def clear_playback_all(self) -> None:
+        if self._active_list == "mp3" and self.mp3_files:
+            self.clear_mp3_list()
+        elif self.playlist:
+            self.clear_playlist()
+        elif self.mp3_files:
+            self.clear_mp3_list()
+        else:
+            self.status.config(text=self.t("status_pl_empty"))
+
     def clear_playlist(self) -> None:
         if not self.playlist:
             self.status.config(text=self.t("status_pl_empty"))
@@ -1135,6 +1129,18 @@ class YoutubeFinder(tk.Tk):
         self.current = -1
         self._refresh_playlist()
         self.status.config(text=self.t("status_pl_cleared", n=n))
+
+    def clear_mp3_list(self) -> None:
+        if not self.mp3_files:
+            self.status.config(text=self.t("status_mp3_empty"))
+            return
+        n = len(self.mp3_files)
+        if self._active_list == "mp3":
+            self._player.stop()
+            self.mp3_current = -1
+        self.mp3_files.clear()
+        self._refresh_mp3_list()
+        self.status.config(text=self.t("status_mp3_cleared", n=n))
 
     def _refresh_playlist(self) -> None:
         self.plist.delete(*self.plist.get_children())
@@ -1151,14 +1157,18 @@ class YoutubeFinder(tk.Tk):
 
     # ---------------- 재생 ----------------
     def play_selected(self) -> None:
-        idx = self._plist_index()
-        if idx is None:
-            if self.playlist:
-                idx = 0
-            else:
-                self.status.config(text=self.t("status_pl_empty"))
-                return
-        self.play_index(idx)
+        pl_idx = self._plist_index()
+        mp3_idx = self._mp3_index()
+        if pl_idx is not None:
+            self.play_index(pl_idx)
+        elif mp3_idx is not None:
+            self.play_mp3_index(mp3_idx)
+        elif self.playlist:
+            self.play_index(0)
+        elif self.mp3_files:
+            self.play_mp3_index(0)
+        else:
+            self.status.config(text=self.t("status_pl_empty"))
 
     def play_index(self, idx: int) -> None:
         if not (0 <= idx < len(self.playlist)) or self._loading:
