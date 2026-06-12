@@ -343,6 +343,7 @@ class YoutubeFinder(tk.Tk):
         self._search_mode = tk.StringVar(value="song")
         self._mv_resolution = tk.StringVar(value=DEFAULT_MV_RESOLUTION)
         self.mp3_folder: str = ""
+        self.mp3_save_folder: str = ""
         self.mp3_files: list[dict] = []
         self.mp3_current: int = -1
         self._active_list: str = "playlist"  # "playlist" | "mp3"
@@ -606,11 +607,9 @@ class YoutubeFinder(tk.Tk):
         self.save_mv_btn = ttk.Button(dlbtn, text="", command=self.save_selected_mv)
         self._ui["btn_save_mv_sel"] = self.save_mv_btn
         self.save_mv_btn.pack(side="left", padx=3)
-        self.kar_one_btn = ttk.Button(dlbtn, text="", command=self.create_kar_from_playlist)
+        self.kar_one_btn = ttk.Button(dlbtn, text="", command=self.create_kar_all_from_save_folder)
         self._ui["btn_kar_create"] = self.kar_one_btn
         self.kar_one_btn.pack(side="left", padx=3)
-        if not _HAS_KAR:
-            self.kar_one_btn.config(state="disabled")
         self._ui["btn_clear_pl_list"] = ttk.Button(dlbtn, text="", command=self.clear_playlist)
         self._ui["btn_clear_pl_list"].pack(side="left", padx=3)
 
@@ -1357,6 +1356,8 @@ class YoutubeFinder(tk.Tk):
         self.save_one_btn.config(state=state)
         self.save_mv_btn.config(state=state)
         self.save_mv_all_btn.config(state=state)
+        if not self._kar_creating:
+            self.kar_one_btn.config(state=state)
 
     def _playlist_mv_items(self) -> list[dict]:
         return [it for it in self.playlist if it.get("media_type") == "mv"]
@@ -1403,6 +1404,7 @@ class YoutubeFinder(tk.Tk):
         folder = filedialog.askdirectory(title=self.t("dlg_mp3_save"))
         if not folder:
             return
+        self.mp3_save_folder = folder
         self._saving = True
         self._set_save_buttons_state(False)
         threading.Thread(
@@ -1472,67 +1474,48 @@ class YoutubeFinder(tk.Tk):
         self._queue.put(("save_done", ok, total, folder, save_kind, res_label if is_mv else None))
 
     # ---------------- KAR MIDI 생성 ----------------
-    def create_kar_from_playlist(self) -> None:
-        """재생 리스트 선택 곡: MP3를 받은 뒤 KAR MIDI 생성."""
+    def create_kar_all_from_save_folder(self) -> None:
+        """MP3 저장 시 지정한 폴더의 모든 MP3 → KAR MIDI."""
         if not _HAS_KAR:
             self.status.config(text=self.t("status_kar_no_mod"))
             return
-        idx = self._plist_index()
-        if idx is None:
-            self.status.config(text=self.t("status_kar_pick"))
-            return
         if self._kar_creating or self._saving:
             return
-        folder = filedialog.askdirectory(title=self.t("dlg_kar_save"))
-        if not folder:
+        folder = self.mp3_save_folder
+        if not folder or not os.path.isdir(folder):
+            self.status.config(text=self.t("status_kar_no_folder"))
             return
-        item = self.playlist[idx]
+        mp3_paths = [
+            it["path"] for it in self._scan_mp3_folder(folder)
+            if os.path.splitext(it["path"])[1].lower() == ".mp3"
+        ]
+        if not mp3_paths:
+            self.status.config(text=self.t("status_kar_no_mp3"))
+            return
         self._kar_creating = True
         self.kar_one_btn.config(state="disabled")
         threading.Thread(
-            target=self._kar_from_playlist_worker,
-            args=(folder, item),
+            target=self._kar_from_folder_worker,
+            args=(folder, mp3_paths),
             daemon=True,
         ).start()
 
-    def _kar_from_playlist_worker(self, folder: str, item: dict) -> None:
-        """유튜브에서 MP3 다운로드 후 KAR 변환."""
-        import tempfile
-
-        title = self._clean_query(item["title"], item.get("channel", ""))
-        artist = item.get("channel", "")
-        total = 1
+    def _kar_from_folder_worker(self, folder: str, mp3_paths: list[str]) -> None:
+        total = len(mp3_paths)
         ok = 0
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                mp3_path = os.path.join(tmp, "audio.mp3")
-                self._queue.put(("status", self.t("status_kar_mp3_dl", title=item["title"])))
-                opts = {
-                    "quiet": True, "no_warnings": True, "noplaylist": True,
-                    "format": "bestaudio/best",
-                    "outtmpl": os.path.join(tmp, "audio.%(ext)s"),
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }],
-                }
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.download([item["url"]])
-                if not os.path.isfile(mp3_path):
-                    mp3s = [f for f in os.listdir(tmp) if f.endswith(".mp3")]
-                    if not mp3s:
-                        raise RuntimeError(self.t("err_mp3_dl"))
-                    mp3_path = os.path.join(tmp, mp3s[0])
-                safe = re.sub(r'[<>:"/\\|?*]', "_", title)[:120]
-                out = os.path.join(folder, f"{safe}.kar")
+        for mp3_path in mp3_paths:
+            title = os.path.splitext(os.path.basename(mp3_path))[0]
+            try:
                 self._queue.put(("status", self.t("status_kar_creating", title=title)))
-                create_kar_from_mp3(mp3_path, out, title=title, artist=artist)
-                ok = 1
-        except Exception as exc:  # noqa: BLE001
-            self._queue.put(("kar_error", str(exc)))
-            return
-        self._queue.put(("kar_done", ok, total, folder))
+                out = os.path.splitext(mp3_path)[0] + ".kar"
+                create_kar_from_mp3(mp3_path, out, title=title)
+                ok += 1
+            except Exception as exc:  # noqa: BLE001
+                self._queue.put(("status", self.t("status_kar_item_fail", title=title, err=str(exc))))
+        if ok == 0:
+            self._queue.put(("kar_error", self.t("status_kar_all_fail")))
+        else:
+            self._queue.put(("kar_done", ok, total, folder))
 
     def _on_close(self) -> None:
         try:
