@@ -32,6 +32,8 @@ from tkinter import filedialog, ttk
 import vlc
 import yt_dlp
 
+from i18n import DEFAULT_LANG, LANG_MAP, LANG_OPTIONS, tr
+
 # macOS: tkinter winfo_id() 는 NSView 포인터가 아니므로 VLC 영상 임베딩이 실패한다.
 _mac_get_nsview = None
 if sys.platform == "darwin":
@@ -117,14 +119,6 @@ def fmt_duration(sec) -> str:
     return f"{m:02d}:{s:02d}"
 
 
-def media_kind_label(media_type: str) -> str:
-    if media_type == "mv":
-        return "🎬 MV"
-    if media_type == "local":
-        return "💾 로컬"
-    return "🎵 노래"
-
-
 def _ytdlp_opts(**extra) -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
     opts.update(extra)
@@ -185,7 +179,7 @@ class MvPlayerWindow(tk.Toplevel):
         self.actual_height: int | None = None
         self._tmpdir: str | None = None
         self._player = app._vlc.media_player_new()
-        self.title(item.get("title", "뮤직비디오"))
+        self.title(item.get("title", self.app.t("mv_default_title")))
         self.configure(bg="#000000")
         self.geometry(f"{self.MV_WIDTH}x{self.MV_HEIGHT}")
         self.minsize(640, 480)
@@ -203,10 +197,14 @@ class MvPlayerWindow(tk.Toplevel):
             bar, text=item.get("title", ""), bg="#0f172a", fg="#e2e8f0",
             font=("sans-serif", 10), anchor="w",
         ).pack(side="left", padx=12, pady=6)
-        ttk.Button(bar, text="⛶ 전체화면 (F11)", command=self._toggle_fullscreen).pack(
-            side="right", padx=4, pady=4,
+        self._mv_fullscreen_btn = ttk.Button(
+            bar, text=self.app.t("fullscreen"), command=self._toggle_fullscreen,
         )
-        ttk.Button(bar, text="닫기 (Esc)", command=self.close).pack(side="right", padx=8, pady=4)
+        self._mv_fullscreen_btn.pack(side="right", padx=4, pady=4)
+        self._mv_close_btn = ttk.Button(
+            bar, text=self.app.t("close"), command=self.close,
+        )
+        self._mv_close_btn.pack(side="right", padx=8, pady=4)
 
         app._player.stop()
         threading.Thread(target=self._fetch_stream, daemon=True).start()
@@ -222,11 +220,13 @@ class MvPlayerWindow(tk.Toplevel):
             if status == "downloading":
                 pct = (d.get("_percent_str") or "").strip()
                 self.app._queue.put((
-                    "status", f"MV 다운로드 ({self.res_label}) {pct} — {title}",
+                    "status",
+                    self.app.t("status_mv_dl", res=self.res_label, pct=pct, title=title),
                 ))
             elif status == "finished" and d.get("postprocessor"):
                 self.app._queue.put((
-                    "status", f"MV 병합 중 ({self.res_label}) — {title}",
+                    "status",
+                    self.app.t("status_mv_merge", res=self.res_label, title=title),
                 ))
 
         try:
@@ -242,7 +242,7 @@ class MvPlayerWindow(tk.Toplevel):
             if not os.path.isfile(path):
                 path = os.path.splitext(path)[0] + ".mp4"
             if not os.path.isfile(path):
-                raise FileNotFoundError("병합된 영상 파일을 찾지 못했습니다.")
+                raise FileNotFoundError(self.app.t("err_merge_file"))
             self.actual_height = info.get("height")
             self.app._queue.put(("mv_ready", self, path, None))
         except Exception as exc:  # noqa: BLE001
@@ -301,6 +301,12 @@ class MvPlayerWindow(tk.Toplevel):
             except OSError:
                 pass
 
+    def apply_language(self) -> None:
+        if not self.winfo_exists():
+            return
+        self._mv_fullscreen_btn.config(text=self.app.t("fullscreen"))
+        self._mv_close_btn.config(text=self.app.t("close"))
+
     def close(self) -> None:
         try:
             self._player.stop()
@@ -317,7 +323,6 @@ class MvPlayerWindow(tk.Toplevel):
 class YoutubeFinder(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("getYoutubeUrl — 유튜브 검색 & 재생")
         # 하단 재생·다운로드 버튼이 한 줄에 다 보이도록 여유 있게 설정
         self.geometry("1240x900")
         self.minsize(1000, 780)
@@ -341,6 +346,8 @@ class YoutubeFinder(tk.Tk):
         self.mp3_files: list[dict] = []
         self.mp3_current: int = -1
         self._active_list: str = "playlist"  # "playlist" | "mp3"
+        self._lang_code = DEFAULT_LANG
+        self._lang_display = tk.StringVar(value=LANG_OPTIONS[0])
 
         # VLC
         self._vlc = vlc.Instance("--no-xlib", "--quiet")
@@ -370,6 +377,64 @@ class YoutubeFinder(tk.Tk):
                 pass
         widget.bind("<FocusIn>", _on_focus_in, add="+")
 
+    def t(self, key: str, **kwargs) -> str:
+        return tr(self._lang_code, key, **kwargs)
+
+    def _kind_label(self, media_type: str) -> str:
+        if media_type == "mv":
+            return self.t("kind_mv")
+        if media_type == "local":
+            return self.t("kind_local")
+        return self.t("kind_song")
+
+    def _on_language_change(self, _evt=None) -> None:
+        self._lang_code = LANG_MAP.get(self._lang_display.get(), DEFAULT_LANG)
+        self._apply_ui_language()
+
+    def _apply_ui_language(self) -> None:
+        self.title(self.t("window_title"))
+        if not getattr(self, "status", None):
+            return
+        self.status.config(text=self.t("status_initial"))
+        for key, widget in self._ui.items():
+            if key.startswith("lbl_"):
+                widget.config(text=self.t(key[4:]))
+            elif key.startswith("btn_"):
+                widget.config(text=self.t(key[4:]))
+            elif key.startswith("radio_"):
+                widget.config(text=self.t(key[6:]))
+        self.shuffle_btn.config(text=self.t("shuffle_on" if self.shuffle else "shuffle_off"))
+        if not self.mp3_folder:
+            self.mp3_folder_label.config(text=self.t("folder_unset"))
+        for tree, cols in ((self.tree, self._res_cols), (self.plist, self._res_cols)):
+            for c, ck in cols:
+                tree.heading(c, text=self.t(ck))
+        for c, ck in self._mp3_cols:
+            self.mp3_tree.heading(c, text=self.t(ck))
+        self._set_lyrics("", self.t("lyrics_wait"))
+        self._refresh_playlist()
+        if self.results:
+            self._rerender_search_results()
+        if self.mp3_files:
+            self._rerender_mp3_files()
+        if self._mv_window and self._mv_window.winfo_exists():
+            self._mv_window.apply_language()
+
+    def _rerender_search_results(self) -> None:
+        sel = self.tree.selection()
+        idx = int(sel[0]) if sel else None
+        self._refresh_search_results(idx)
+
+    def _rerender_mp3_files(self) -> None:
+        sel = self.mp3_tree.selection()
+        self.mp3_tree.delete(*self.mp3_tree.get_children())
+        for i, it in enumerate(self.mp3_files, 1):
+            self.mp3_tree.insert("", "end", iid=str(i - 1), values=(
+                i, it["title"], fmt_duration(it.get("duration")),
+            ))
+        if sel and sel[0] in self.mp3_tree.get_children():
+            self.mp3_tree.selection_set(sel[0])
+
     def _build_ui(self) -> None:
         style = ttk.Style(self)
         try:
@@ -385,9 +450,15 @@ class YoutubeFinder(tk.Tk):
         style.map("Treeview", background=[("selected", "#38bdf8")],
                   foreground=[("selected", "#0f172a")])
 
+        self._ui: dict = {}
+        self._res_cols = (
+            ("no", "col_no"), ("kind", "col_kind"), ("title", "col_title"),
+            ("channel", "col_channel"), ("dur", "col_dur"),
+        )
+        self._mp3_cols = (("no", "col_no"), ("title", "col_filename"), ("dur", "col_dur"))
+
         # 상태줄 (맨 아래)
-        self.status = tk.Label(self, text="노래 제목을 입력하고 검색하세요.",
-                               bg="#0f172a", fg="#94a3b8", anchor="w")
+        self.status = tk.Label(self, text="", bg="#0f172a", fg="#94a3b8", anchor="w")
         self.status.pack(side="bottom", fill="x", padx=16, pady=(2, 10))
 
         # 본문: 왼쪽(검색/리스트/컨트롤) + 오른쪽(가사)
@@ -400,8 +471,10 @@ class YoutubeFinder(tk.Tk):
         left.pack(side="left", fill="both", expand=True)
 
         # 오른쪽: 가사 패널
-        tk.Label(right, text="가사", bg="#111827", fg="#fcd34d",
-                 font=("sans-serif", 11, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
+        self._ui["lbl_lyrics"] = tk.Label(
+            right, text="", bg="#111827", fg="#fcd34d", font=("sans-serif", 11, "bold"),
+        )
+        self._ui["lbl_lyrics"].pack(anchor="w", padx=12, pady=(12, 4))
         self.lyrics_title = tk.Label(right, text="", bg="#111827", fg="#cbd5e1",
                                      font=("sans-serif", 9), wraplength=290, justify="left")
         self.lyrics_title.pack(anchor="w", padx=12)
@@ -414,53 +487,58 @@ class YoutubeFinder(tk.Tk):
         lsb = ttk.Scrollbar(lyr, orient="vertical", command=self.lyrics_text.yview)
         lsb.pack(side="right", fill="y")
         self.lyrics_text.config(yscrollcommand=lsb.set)
-        self._set_lyrics("", "재생을 시작하면 가사가 표시됩니다.")
 
         # 검색 모드 (노래 / 뮤직비디오)
         mode_row = tk.Frame(left, bg="#0f172a")
         mode_row.pack(fill="x", padx=16, pady=(14, 4))
-        tk.Label(mode_row, text="검색 종류", bg="#0f172a", fg="#fcd34d",
-                 font=("sans-serif", 10, "bold")).pack(side="left")
-        ttk.Radiobutton(
-            mode_row, text="🎵 노래 검색", variable=self._search_mode,
-            value="song",
-        ).pack(side="left", padx=(10, 4))
-        ttk.Radiobutton(
-            mode_row, text="🎬 뮤직비디오", variable=self._search_mode,
-            value="mv",
-        ).pack(side="left", padx=4)
+        self._ui["lbl_search_kind"] = tk.Label(
+            mode_row, text="", bg="#0f172a", fg="#fcd34d", font=("sans-serif", 10, "bold"),
+        )
+        self._ui["lbl_search_kind"].pack(side="left")
+        self._ui["radio_song_mode"] = ttk.Radiobutton(
+            mode_row, text="", variable=self._search_mode, value="song",
+        )
+        self._ui["radio_song_mode"].pack(side="left", padx=(10, 4))
+        self._ui["radio_mv_mode"] = ttk.Radiobutton(
+            mode_row, text="", variable=self._search_mode, value="mv",
+        )
+        self._ui["radio_mv_mode"].pack(side="left", padx=4)
 
         # 검색 입력줄
         top = tk.Frame(left, bg="#0f172a")
         top.pack(fill="x", padx=16, pady=(4, 6))
-        tk.Label(top, text="검색어", bg="#0f172a", fg="#f8fafc",
-                 font=("sans-serif", 11, "bold")).pack(side="left")
+        self._ui["lbl_query"] = tk.Label(
+            top, text="", bg="#0f172a", fg="#f8fafc", font=("sans-serif", 11, "bold"),
+        )
+        self._ui["lbl_query"].pack(side="left")
         self.entry = tk.Entry(top, bg="#1e293b", fg="#f8fafc", insertbackground="#f8fafc",
                               relief="flat", font=("sans-serif", 12))
         self.entry.pack(side="left", fill="x", expand=True, padx=10, ipady=5)
         self._enable_ime(self.entry)
         self.entry.focus_set()
-        tk.Label(top, text="개수", bg="#0f172a", fg="#cbd5e1").pack(side="left", padx=(4, 2))
+        self._ui["lbl_count"] = tk.Label(top, text="", bg="#0f172a", fg="#cbd5e1")
+        self._ui["lbl_count"].pack(side="left", padx=(4, 2))
         self.count_var = tk.IntVar(value=DEFAULT_RESULTS)
         self.count_spin = ttk.Spinbox(top, from_=1, to=MAX_RESULTS, increment=5,
                                       width=5, textvariable=self.count_var)
         self.count_spin.pack(side="left", padx=(0, 6))
-        self.search_btn = ttk.Button(top, text="검색", command=self.search)
+        self.search_btn = ttk.Button(top, text="", command=self.search)
+        self._ui["btn_search"] = self.search_btn
         self.search_btn.pack(side="left")
 
         # 검색 결과
-        tk.Label(left, text="검색 결과", bg="#0f172a", fg="#93c5fd",
-                 font=("sans-serif", 10, "bold")).pack(anchor="w", padx=16)
+        self._ui["lbl_search_results"] = tk.Label(
+            left, text="", bg="#0f172a", fg="#93c5fd", font=("sans-serif", 10, "bold"),
+        )
+        self._ui["lbl_search_results"].pack(anchor="w", padx=16)
         res = tk.Frame(left, bg="#0f172a")
         res.pack(fill="both", expand=True, padx=16, pady=(2, 4))
         rcols = ("no", "kind", "title", "channel", "dur")
         self.tree = ttk.Treeview(res, columns=rcols, show="headings", selectmode="browse", height=7)
-        for c, t, w, anc, st in (
-            ("no", "#", 36, "center", False), ("kind", "구분", 72, "center", False),
-            ("title", "제목", 440, "w", True),
-            ("channel", "채널", 150, "w", False), ("dur", "길이", 64, "center", False),
+        for c, w, anc, st in (
+            ("no", 36, "center", False), ("kind", 72, "center", False),
+            ("title", 440, "w", True), ("channel", 150, "w", False), ("dur", 64, "center", False),
         ):
-            self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor=anc, stretch=st)
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<Double-1>", self._on_search_result_double)
@@ -470,32 +548,43 @@ class YoutubeFinder(tk.Tk):
 
         rbtn = tk.Frame(left, bg="#0f172a")
         rbtn.pack(fill="x", padx=16, pady=(0, 6))
-        ttk.Button(rbtn, text="추가 ↓", command=self.add_to_playlist).pack(side="left", padx=3)
-        ttk.Button(rbtn, text="🗑 삭제", command=self.remove_selected).pack(side="left", padx=3)
-        ttk.Button(rbtn, text="🎬 MV 재생", command=self.play_selected_mv_from_results).pack(
-            side="left", padx=3,
-        )
-        tk.Label(rbtn, text="해상도", bg="#0f172a", fg="#cbd5e1").pack(side="left", padx=(8, 2))
+        self._ui["btn_add"] = ttk.Button(rbtn, text="", command=self.add_to_playlist)
+        self._ui["btn_add"].pack(side="left", padx=3)
+        self._ui["btn_delete_r"] = ttk.Button(rbtn, text="", command=self.remove_selected)
+        self._ui["btn_delete_r"].pack(side="left", padx=3)
+        self._ui["btn_mv_play"] = ttk.Button(rbtn, text="", command=self.play_selected_mv_from_results)
+        self._ui["btn_mv_play"].pack(side="left", padx=3)
+        self._ui["lbl_resolution"] = tk.Label(rbtn, text="", bg="#0f172a", fg="#cbd5e1")
+        self._ui["lbl_resolution"].pack(side="left", padx=(8, 2))
         self.mv_res_combo = ttk.Combobox(
             rbtn, textvariable=self._mv_resolution,
             values=list(MV_RESOLUTIONS), state="readonly", width=5,
         )
         self.mv_res_combo.pack(side="left", padx=3)
-        ttk.Button(rbtn, text="브라우저로 열기", command=self.open_selected_result).pack(side="left", padx=3)
+        self._ui["btn_browser"] = ttk.Button(rbtn, text="", command=self.open_selected_result)
+        self._ui["btn_browser"].pack(side="left", padx=3)
+        self._ui["lbl_language"] = tk.Label(rbtn, text="", bg="#0f172a", fg="#cbd5e1")
+        self._ui["lbl_language"].pack(side="left", padx=(8, 2))
+        self.lang_combo = ttk.Combobox(
+            rbtn, textvariable=self._lang_display,
+            values=list(LANG_OPTIONS), state="readonly", width=8,
+        )
+        self.lang_combo.pack(side="left", padx=3)
+        self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_change)
 
         # 재생 리스트
-        tk.Label(left, text="재생 리스트", bg="#0f172a", fg="#86efac",
-                 font=("sans-serif", 10, "bold")).pack(anchor="w", padx=16)
+        self._ui["lbl_playlist"] = tk.Label(
+            left, text="", bg="#0f172a", fg="#86efac", font=("sans-serif", 10, "bold"),
+        )
+        self._ui["lbl_playlist"].pack(anchor="w", padx=16)
         pl = tk.Frame(left, bg="#0f172a")
         pl.pack(fill="both", expand=True, padx=16, pady=(2, 4))
         pcols = ("no", "kind", "title", "channel", "dur")
         self.plist = ttk.Treeview(pl, columns=pcols, show="headings", selectmode="browse", height=6)
-        for c, t, w, anc, st in (
-            ("no", "#", 36, "center", False), ("kind", "구분", 72, "center", False),
-            ("title", "제목", 440, "w", True),
-            ("channel", "채널", 150, "w", False), ("dur", "길이", 64, "center", False),
+        for c, w, anc, st in (
+            ("no", 36, "center", False), ("kind", 72, "center", False),
+            ("title", 440, "w", True), ("channel", 150, "w", False), ("dur", 64, "center", False),
         ):
-            self.plist.heading(c, text=t)
             self.plist.column(c, width=w, anchor=anc, stretch=st)
         self.plist.pack(side="left", fill="both", expand=True)
         self.plist.bind("<Double-1>", self._on_playlist_double)
@@ -503,23 +592,23 @@ class YoutubeFinder(tk.Tk):
         psb.pack(side="right", fill="y")
         self.plist.config(yscrollcommand=psb.set)
 
-        # 재생 리스트 — MP3 다운로드
+        # 재생 리스트 — MP3 / MV 다운로드
         dlbtn = tk.Frame(left, bg="#0f172a")
         dlbtn.pack(fill="x", padx=16, pady=(0, 6))
-        self.save_btn = ttk.Button(dlbtn, text="⬇ MP3 다운로드 (전체)",
-                                   command=self.save_all_mp3)
+        self.save_btn = ttk.Button(dlbtn, text="", command=self.save_all_mp3)
+        self._ui["btn_save_mp3_all"] = self.save_btn
         self.save_btn.pack(side="left", padx=3)
-        self.save_one_btn = ttk.Button(dlbtn, text="⬇ 선택 곡 저장",
-                                       command=self.save_selected_mp3)
+        self.save_one_btn = ttk.Button(dlbtn, text="", command=self.save_selected_mp3)
+        self._ui["btn_save_mp3_sel"] = self.save_one_btn
         self.save_one_btn.pack(side="left", padx=3)
-        self.save_mv_btn = ttk.Button(dlbtn, text="⬇ 선택 MV 저장",
-                                      command=self.save_selected_mv)
+        self.save_mv_btn = ttk.Button(dlbtn, text="", command=self.save_selected_mv)
+        self._ui["btn_save_mv_sel"] = self.save_mv_btn
         self.save_mv_btn.pack(side="left", padx=3)
-        self.save_mv_all_btn = ttk.Button(dlbtn, text="⬇ MV 다운로드 (전체)",
-                                         command=self.save_all_mv)
+        self.save_mv_all_btn = ttk.Button(dlbtn, text="", command=self.save_all_mv)
+        self._ui["btn_save_mv_all"] = self.save_mv_all_btn
         self.save_mv_all_btn.pack(side="left", padx=3)
-        self.kar_one_btn = ttk.Button(dlbtn, text="선택곡 MIDI파일 생성",
-                                      command=self.create_kar_from_playlist)
+        self.kar_one_btn = ttk.Button(dlbtn, text="", command=self.create_kar_from_playlist)
+        self._ui["btn_kar_create"] = self.kar_one_btn
         self.kar_one_btn.pack(side="left", padx=3)
         if not _HAS_KAR:
             self.kar_one_btn.config(state="disabled")
@@ -527,16 +616,16 @@ class YoutubeFinder(tk.Tk):
         # 로컬 MP3 폴더
         mp3_hdr = tk.Frame(left, bg="#0f172a")
         mp3_hdr.pack(fill="x", padx=16, pady=(4, 2))
-        tk.Label(mp3_hdr, text="로컬 MP3", bg="#0f172a", fg="#f9a8d4",
-                 font=("sans-serif", 10, "bold")).pack(side="left")
+        self._ui["lbl_local_mp3"] = tk.Label(
+            mp3_hdr, text="", bg="#0f172a", fg="#f9a8d4", font=("sans-serif", 10, "bold"),
+        )
+        self._ui["lbl_local_mp3"].pack(side="left")
         self.mp3_folder_label = tk.Label(
-            mp3_hdr, text="(폴더 미지정)", bg="#0f172a", fg="#94a3b8",
-            font=("sans-serif", 9), anchor="w",
+            mp3_hdr, text="", bg="#0f172a", fg="#94a3b8", font=("sans-serif", 9), anchor="w",
         )
         self.mp3_folder_label.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(mp3_hdr, text="📁 폴더 선택", command=self.pick_mp3_folder).pack(
-            side="right", padx=3,
-        )
+        self._ui["btn_pick_folder"] = ttk.Button(mp3_hdr, text="", command=self.pick_mp3_folder)
+        self._ui["btn_pick_folder"].pack(side="right", padx=3)
         ttk.Button(mp3_hdr, text="🔄", width=3, command=self.refresh_mp3_folder).pack(
             side="right", padx=3,
         )
@@ -545,12 +634,9 @@ class YoutubeFinder(tk.Tk):
         mp3f.pack(fill="both", expand=True, padx=16, pady=(2, 4))
         mcols = ("no", "title", "dur")
         self.mp3_tree = ttk.Treeview(mp3f, columns=mcols, show="headings", selectmode="browse", height=5)
-        for c, t, w, anc, st in (
-            ("no", "#", 36, "center", False),
-            ("title", "파일명", 520, "w", True),
-            ("dur", "길이", 64, "center", False),
+        for c, w, anc, st in (
+            ("no", 36, "center", False), ("title", 520, "w", True), ("dur", 64, "center", False),
         ):
-            self.mp3_tree.heading(c, text=t)
             self.mp3_tree.column(c, width=w, anchor=anc, stretch=st)
         self.mp3_tree.pack(side="left", fill="both", expand=True)
         self.mp3_tree.bind("<Double-1>", self._on_mp3_double)
@@ -560,23 +646,36 @@ class YoutubeFinder(tk.Tk):
 
         mp3btn = tk.Frame(left, bg="#0f172a")
         mp3btn.pack(fill="x", padx=16, pady=(0, 6))
-        ttk.Button(mp3btn, text="▶ MP3 재생", command=self.play_selected_mp3).pack(side="left", padx=3)
-        ttk.Button(mp3btn, text="전체 추가", command=self.add_all_mp3_to_playlist).pack(side="left", padx=3)
-        ttk.Button(mp3btn, text="🗑 삭제", command=self.remove_mp3_from_list).pack(side="left", padx=3)
+        self._ui["btn_mp3_play"] = ttk.Button(mp3btn, text="", command=self.play_selected_mp3)
+        self._ui["btn_mp3_play"].pack(side="left", padx=3)
+        self._ui["btn_add_all_mp3"] = ttk.Button(mp3btn, text="", command=self.add_all_mp3_to_playlist)
+        self._ui["btn_add_all_mp3"].pack(side="left", padx=3)
+        self._ui["btn_del_mp3"] = ttk.Button(mp3btn, text="", command=self.remove_mp3_from_list)
+        self._ui["btn_del_mp3"].pack(side="left", padx=3)
 
         # 재생 컨트롤
         pbtn = tk.Frame(left, bg="#0f172a")
         pbtn.pack(fill="x", padx=16, pady=(0, 4))
-        ttk.Button(pbtn, text="▶ 재생", command=self.play_selected).pack(side="left", padx=3)
-        ttk.Button(pbtn, text="⏸ 일시정지", command=self.toggle_pause).pack(side="left", padx=3)
-        ttk.Button(pbtn, text="⏹ 정지", command=self.stop).pack(side="left", padx=3)
-        ttk.Button(pbtn, text="⏭ 다음", command=self.play_next).pack(side="left", padx=3)
-        ttk.Button(pbtn, text="🔀 랜덤재생", command=self.play_random).pack(side="left", padx=3)
-        self.shuffle_btn = ttk.Button(pbtn, text="랜덤: 끔", width=9, command=self.toggle_shuffle)
+        self._ui["btn_play"] = ttk.Button(pbtn, text="", command=self.play_selected)
+        self._ui["btn_play"].pack(side="left", padx=3)
+        self._ui["btn_pause"] = ttk.Button(pbtn, text="", command=self.toggle_pause)
+        self._ui["btn_pause"].pack(side="left", padx=3)
+        self._ui["btn_stop"] = ttk.Button(pbtn, text="", command=self.stop)
+        self._ui["btn_stop"].pack(side="left", padx=3)
+        self._ui["btn_next"] = ttk.Button(pbtn, text="", command=self.play_next)
+        self._ui["btn_next"].pack(side="left", padx=3)
+        self._ui["btn_shuffle"] = ttk.Button(pbtn, text="", command=self.play_random)
+        self._ui["btn_shuffle"].pack(side="left", padx=3)
+        self.shuffle_btn = ttk.Button(pbtn, text="", width=9, command=self.toggle_shuffle)
         self.shuffle_btn.pack(side="left", padx=3)
-        ttk.Button(pbtn, text="🗑 삭제", command=self.remove_selected).pack(side="left", padx=3)
-        ttk.Button(pbtn, text="🗑 전체삭제", command=self.clear_playlist).pack(side="left", padx=3)
-        ttk.Button(pbtn, text="전체 URL 복사", command=self.copy_all).pack(side="left", padx=3)
+        self._ui["btn_delete_pl"] = ttk.Button(pbtn, text="", command=self.remove_selected)
+        self._ui["btn_delete_pl"].pack(side="left", padx=3)
+        self._ui["btn_clear_pl"] = ttk.Button(pbtn, text="", command=self.clear_playlist)
+        self._ui["btn_clear_pl"].pack(side="left", padx=3)
+        self._ui["btn_copy_urls"] = ttk.Button(pbtn, text="", command=self.copy_all)
+        self._ui["btn_copy_urls"].pack(side="left", padx=3)
+
+        self._apply_ui_language()
 
     # ---------------- 검색 ----------------
     def search(self) -> None:
@@ -593,8 +692,8 @@ class YoutubeFinder(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         self.results = []
         mode = self._search_mode.get()
-        mode_label = "뮤직비디오" if mode == "mv" else "노래"
-        self.status.config(text=f"'{query}' {mode_label} 검색 중… (최대 {count}개)")
+        mode_label = self.t("mode_mv") if mode == "mv" else self.t("mode_song")
+        self.status.config(text=self.t("status_searching", query=query, mode=mode_label, count=count))
         threading.Thread(
             target=self._search_worker, args=(query, count, mode), daemon=True,
         ).start()
@@ -670,18 +769,16 @@ class YoutubeFinder(tk.Tk):
                         res = win.res_label
                         if win.actual_height:
                             res = f"{win.res_label} {win.actual_height}p"
-                        self.status.config(
-                            text=f"🎬 MV 재생 ({res}): {win.item.get('title', '')}",
-                        )
+                        self.status.config(text=self.t("status_mv_play", res=res, title=win.item.get("title", "")))
                 elif kind == "mv_error":
                     win, err = msg[1], msg[2]
-                    self.status.config(text=f"MV 재생 실패: {err}")
+                    self.status.config(text=self.t("status_mv_fail", err=err))
                     if win.winfo_exists():
                         win.close()
                 elif kind == "error":
                     self._searching = False
                     self.search_btn.config(state="normal")
-                    self.status.config(text=f"오류: {msg[1]}")
+                    self.status.config(text=self.t("status_error", err=msg[1]))
                 elif kind == "status":
                     self.status.config(text=msg[1])
                 elif kind == "play":
@@ -690,18 +787,18 @@ class YoutubeFinder(tk.Tk):
                     headers = msg[3] if len(msg) > 3 else None
                     self._player.set_media(_vlc_media(self._vlc, stream, headers))
                     self._player.play()
-                    self.status.config(text=f"▶ 재생 중: {title}")
+                    self.status.config(text=self.t("status_playing", title=title))
                 elif kind == "mp3_scan_done":
                     self._show_mp3_files(msg[1], msg[2])
                 elif kind == "mp3_durations":
                     self._update_mp3_durations(msg[1])
                 elif kind == "play_error":
                     self._loading = False
-                    self.status.config(text=f"재생 실패: {msg[1]}")
+                    self.status.config(text=self.t("status_play_fail", err=msg[1]))
                 elif kind == "lyrics":
                     seq, title, lrc = msg[1], msg[2], msg[3]
                     if seq == self._lyrics_seq:  # 최신 요청만 반영
-                        self._set_lyrics(title, lrc or "가사를 찾지 못했습니다.")
+                        self._set_lyrics(title, lrc or self.t("lyrics_not_found"))
                 elif kind == "save_done":
                     ok, total, folder = msg[1], msg[2], msg[3]
                     save_kind = msg[4] if len(msg) > 4 else "mp3"
@@ -710,20 +807,20 @@ class YoutubeFinder(tk.Tk):
                     self._set_save_buttons_state(True)
                     if save_kind == "mp3":
                         label = "MP3"
-                        unit = "곡"
+                        unit = self.t("unit_song")
                     else:
                         label = f"MV ({res_label})" if res_label else "MV"
-                        unit = "MV"
-                    self.status.config(text=f"{label} 저장 완료: {ok}/{total}{unit} → {folder}")
+                        unit = self.t("unit_mv")
+                    self.status.config(text=self.t("status_save_done", label=label, ok=ok, total=total, unit=unit, folder=folder))
                 elif kind == "kar_done":
                     ok, total, folder = msg[1], msg[2], msg[3]
                     self._kar_creating = False
                     self.kar_one_btn.config(state="normal")
-                    self.status.config(text=f"KAR MIDI 생성 완료: {ok}/{total}곡 → {folder}")
+                    self.status.config(text=self.t("status_kar_done", ok=ok, total=total, folder=folder))
                 elif kind == "kar_error":
                     self._kar_creating = False
                     self.kar_one_btn.config(state="normal")
-                    self.status.config(text=f"KAR 생성 실패: {msg[1]}")
+                    self.status.config(text=self.t("status_kar_fail", err=msg[1]))
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
@@ -732,7 +829,7 @@ class YoutubeFinder(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         for i, it in enumerate(self.results, 1):
             self.tree.insert("", "end", iid=str(i - 1), values=(
-                i, media_kind_label(it.get("media_type", "song")),
+                i, self._kind_label(it.get("media_type", "song")),
                 it["title"], it["channel"], fmt_duration(it["duration"]),
             ))
         if self.results:
@@ -746,12 +843,10 @@ class YoutubeFinder(tk.Tk):
         self._refresh_search_results(0)
         if items:
             if mode == "mv":
-                hint = "MV는 '🎬 MV 재생' 또는 더블클릭. 노래는 '추가 ↓'."
-            else:
-                hint = "'추가 ↓' 로 재생 리스트에 담기. MV는 '🎬 MV 재생'."
-            self.status.config(text=f"{len(items)}개 결과. {hint}")
+                key = "status_results_mv" if mode == "mv" else "status_results_song"
+            self.status.config(text=self.t(key, n=len(items)))
         else:
-            self.status.config(text="검색 결과가 없습니다.")
+            self.status.config(text=self.t("status_no_results"))
 
     def _selected_result_item(self) -> dict | None:
         sel = self.tree.selection()
@@ -774,7 +869,7 @@ class YoutubeFinder(tk.Tk):
     def play_selected_mv_from_results(self) -> None:
         item = self._selected_result_item()
         if not item:
-            self.status.config(text="MV를 재생할 항목을 선택하세요.")
+            self.status.config(text=self.t("status_pick_mv"))
             return
         self._open_mv_player(item)
 
@@ -792,7 +887,7 @@ class YoutubeFinder(tk.Tk):
         self._loading = False
         res_label = self._mv_resolution.get()
         max_height = self._mv_max_height()
-        self.status.config(text=f"MV 준비 중 ({res_label}): {item['title']} …")
+        self.status.config(text=self.t("status_mv_prep", res=res_label, title=item["title"]))
         self._mv_window = MvPlayerWindow(self, item, max_height, res_label)
 
     def _on_playlist_double(self, _evt) -> None:
@@ -807,7 +902,7 @@ class YoutubeFinder(tk.Tk):
 
     # ---------------- 로컬 MP3 폴더 ----------------
     def pick_mp3_folder(self) -> None:
-        folder = filedialog.askdirectory(title="MP3 폴더 선택")
+        folder = filedialog.askdirectory(title=self.t("dlg_mp3_folder"))
         if not folder:
             return
         self.mp3_folder = folder
@@ -815,12 +910,12 @@ class YoutubeFinder(tk.Tk):
 
     def refresh_mp3_folder(self) -> None:
         if not self.mp3_folder:
-            self.status.config(text="먼저 MP3 폴더를 선택하세요.")
+            self.status.config(text=self.t("status_pick_mp3_first"))
             return
         self._load_mp3_folder(self.mp3_folder)
 
     def _load_mp3_folder(self, folder: str) -> None:
-        self.status.config(text=f"MP3 폴더 스캔 중: {folder} …")
+        self.status.config(text=self.t("status_mp3_scan", folder=folder))
         threading.Thread(target=self._scan_mp3_folder_worker, args=(folder,), daemon=True).start()
 
     @staticmethod
@@ -840,7 +935,7 @@ class YoutubeFinder(tk.Tk):
             items.append({
                 "title": os.path.splitext(name)[0],
                 "path": path,
-                "channel": "로컬",
+                "channel": self.t("channel_local"),
                 "duration": None,
                 "media_type": "local",
             })
@@ -850,7 +945,7 @@ class YoutubeFinder(tk.Tk):
         items = self._scan_mp3_folder(folder)
         self._queue.put(("mp3_scan_done", folder, items))
         if items:
-            self._queue.put(("status", f"MP3 {len(items)}곡 길이 정보 불러오는 중…"))
+            self._queue.put(("status", self.t("status_mp3_probe", n=len(items))))
             durations = self._probe_durations(items)
             self._queue.put(("mp3_durations", durations))
 
@@ -878,9 +973,9 @@ class YoutubeFinder(tk.Tk):
         self._refresh_mp3_list()
         if items:
             self.mp3_tree.selection_set("0")
-            self.status.config(text=f"MP3 {len(items)}곡 — 더블클릭 또는 '▶ MP3 재생'")
+            self.status.config(text=self.t("status_mp3_found", n=len(items)))
         else:
-            self.status.config(text="MP3 파일이 없습니다.")
+            self.status.config(text=self.t("status_mp3_empty"))
 
     def _update_mp3_durations(self, durations: dict[str, int | None]) -> None:
         changed = False
@@ -915,7 +1010,7 @@ class YoutubeFinder(tk.Tk):
             if self.mp3_files:
                 idx = 0
             else:
-                self.status.config(text="MP3 폴더를 선택하거나 재생할 곡을 고르세요.")
+                self.status.config(text=self.t("status_pick_mp3_folder"))
                 return
         self.play_mp3_index(idx)
 
@@ -933,31 +1028,31 @@ class YoutubeFinder(tk.Tk):
         self._loading = False
         self._player.set_media(self._vlc.media_new(item["path"]))
         self._player.play()
-        self.status.config(text=f"▶ 로컬 재생: {item['title']}")
+        self.status.config(text=self.t("status_local_play", title=item["title"]))
         self._fetch_lyrics(item)
 
     def add_mp3_to_playlist(self) -> None:
         idx = self._mp3_index()
         if idx is None:
-            self.status.config(text="재생 리스트에 추가할 MP3를 선택하세요.")
+            self.status.config(text=self.t("status_pick_mp3_add"))
             return
         self._append_local_item(self.mp3_files[idx])
 
     def add_all_mp3_to_playlist(self) -> None:
         if not self.mp3_files:
-            self.status.config(text="추가할 MP3가 없습니다.")
+            self.status.config(text=self.t("status_no_mp3_add"))
             return
         added = 0
         for it in self.mp3_files:
             if self._append_local_item(it, refresh=False):
                 added += 1
         self._refresh_playlist()
-        self.status.config(text=f"로컬 MP3 {added}곡을 재생 리스트에 추가했습니다.")
+        self.status.config(text=self.t("status_mp3_added", n=added))
 
     def remove_mp3_from_list(self) -> None:
         idx = self._mp3_index()
         if idx is None:
-            self.status.config(text="삭제할 MP3를 선택하세요.")
+            self.status.config(text=self.t("status_pick_mp3_del"))
             return
         title = self.mp3_files[idx]["title"]
         del self.mp3_files[idx]
@@ -970,7 +1065,7 @@ class YoutubeFinder(tk.Tk):
         self._refresh_mp3_list()
         if self.mp3_files:
             self.mp3_tree.selection_set(str(min(idx, len(self.mp3_files) - 1)))
-        self.status.config(text=f"MP3 목록에서 삭제됨: {title}")
+        self.status.config(text=self.t("status_mp3_removed", title=title))
 
     def _append_local_item(self, item: dict, refresh: bool = True) -> bool:
         path = item["path"]
@@ -979,7 +1074,7 @@ class YoutubeFinder(tk.Tk):
         self.playlist.append(dict(item))
         if refresh:
             self._refresh_playlist()
-            self.status.config(text=f"추가됨: {item['title']}")
+            self.status.config(text=self.t("status_added", title=item["title"]))
         return True
 
     def _mp3_next_index(self) -> int | None:
@@ -1009,16 +1104,16 @@ class YoutubeFinder(tk.Tk):
         if "media_type" not in item:
             item["media_type"] = "mv" if is_mv_title(item["title"]) else "song"
         if any(p.get("url") == item["url"] for p in self.playlist):
-            self.status.config(text="이미 재생 리스트에 있는 곡입니다.")
+            self.status.config(text=self.t("status_duplicate"))
             return
         self.playlist.append(item)
         self._refresh_playlist()
-        self.status.config(text=f"추가됨: {item['title']}")
+        self.status.config(text=self.t("status_added", title=item["title"]))
 
     def remove_selected(self) -> None:
         idx = self._plist_index()
         if idx is None:
-            self.status.config(text="재생 리스트에서 삭제할 곡을 선택하세요.")
+            self.status.config(text=self.t("status_pick_delete_pl"))
             return
         title = self.playlist[idx]["title"]
         del self.playlist[idx]
@@ -1028,25 +1123,25 @@ class YoutubeFinder(tk.Tk):
         elif self.current > idx:
             self.current -= 1
         self._refresh_playlist()
-        self.status.config(text=f"삭제됨: {title}")
+        self.status.config(text=self.t("status_deleted", title=title))
 
     def clear_playlist(self) -> None:
         if not self.playlist:
-            self.status.config(text="재생 리스트가 비어 있습니다.")
+            self.status.config(text=self.t("status_pl_empty"))
             return
         n = len(self.playlist)
         self._player.stop()
         self.playlist.clear()
         self.current = -1
         self._refresh_playlist()
-        self.status.config(text=f"재생 리스트 전체 삭제됨 ({n}곡).")
+        self.status.config(text=self.t("status_pl_cleared", n=n))
 
     def _refresh_playlist(self) -> None:
         self.plist.delete(*self.plist.get_children())
         for i, it in enumerate(self.playlist, 1):
             mark = "▶ " if (i - 1) == self.current else ""
             self.plist.insert("", "end", iid=str(i - 1), values=(
-                i, media_kind_label(it.get("media_type", "song")),
+                i, self._kind_label(it.get("media_type", "song")),
                 mark + it["title"], it["channel"], fmt_duration(it["duration"]),
             ))
 
@@ -1061,7 +1156,7 @@ class YoutubeFinder(tk.Tk):
             if self.playlist:
                 idx = 0
             else:
-                self.status.config(text="재생 리스트가 비어 있습니다.")
+                self.status.config(text=self.t("status_pl_empty"))
                 return
         self.play_index(idx)
 
@@ -1084,11 +1179,11 @@ class YoutubeFinder(tk.Tk):
             self._loading = False
             self._player.set_media(self._vlc.media_new(item["path"]))
             self._player.play()
-            self.status.config(text=f"▶ 로컬 재생: {item['title']}")
+            self.status.config(text=self.t("status_local_play", title=item["title"]))
             self._fetch_lyrics(item)
             return
         self._loading = True
-        self.status.config(text=f"불러오는 중: {item['title']} …")
+        self.status.config(text=self.t("status_loading", title=item["title"]))
         threading.Thread(target=self._play_worker, args=(item,), daemon=True).start()
         self._fetch_lyrics(item)
 
@@ -1129,9 +1224,9 @@ class YoutubeFinder(tk.Tk):
         self._lyrics_seq += 1
         seq = self._lyrics_seq
         if not _HAS_LYRICS:
-            self._set_lyrics(item["title"], "(syncedlyrics 미설치: 가사 기능 불가)")
+            self._set_lyrics(item["title"], self.t("lyrics_no_module"))
             return
-        self._set_lyrics(item["title"], "가사 불러오는 중…")
+        self._set_lyrics(item["title"], self.t("lyrics_loading"))
         query = self._clean_query(item["title"], item["channel"])
         threading.Thread(target=self._lyrics_worker, args=(seq, query, item["title"]),
                          daemon=True).start()
@@ -1155,34 +1250,34 @@ class YoutubeFinder(tk.Tk):
     def toggle_pause(self) -> None:
         if self._player.get_state() == vlc.State.Playing:
             self._player.pause()
-            self.status.config(text="⏸ 일시정지")
+            self.status.config(text=self.t("status_paused"))
         elif self._player.get_state() == vlc.State.Paused:
             self._player.play()
-            self.status.config(text="▶ 재생 재개")
+            self.status.config(text=self.t("status_resumed"))
 
     def stop(self) -> None:
         self._player.stop()
-        self.status.config(text="⏹ 정지")
+        self.status.config(text=self.t("status_stopped"))
 
     def toggle_shuffle(self) -> None:
         self.shuffle = not self.shuffle
-        self.shuffle_btn.config(text="랜덤: 켬" if self.shuffle else "랜덤: 끔")
-        self.status.config(text="랜덤 재생 켜짐" if self.shuffle else "랜덤 재생 꺼짐")
+        self.shuffle_btn.config(text=self.t("shuffle_on" if self.shuffle else "shuffle_off"))
+        self.status.config(text=self.t("status_shuffle_on" if self.shuffle else "status_shuffle_off"))
 
     def play_random(self) -> None:
         """랜덤 재생을 켜고 리스트에서 무작위 곡을 즉시 재생."""
         if self._active_list == "mp3" and self.mp3_files:
             if not self.shuffle:
                 self.shuffle = True
-                self.shuffle_btn.config(text="랜덤: 켬")
+                self.shuffle_btn.config(text=self.t("shuffle_on"))
             self.play_mp3_index(self._random_mp3_index())
             return
         if not self.playlist:
-            self.status.config(text="재생 리스트가 비어 있습니다.")
+            self.status.config(text=self.t("status_pl_empty"))
             return
         if not self.shuffle:
             self.shuffle = True
-            self.shuffle_btn.config(text="랜덤: 켬")
+            self.shuffle_btn.config(text=self.t("shuffle_on"))
         self.play_index(self._random_index())
 
     def _random_index(self) -> int:
@@ -1206,13 +1301,13 @@ class YoutubeFinder(tk.Tk):
         if self._active_list == "mp3":
             nxt = self._mp3_next_index()
             if nxt is None:
-                self.status.config(text="마지막 MP3입니다.")
+                self.status.config(text=self.t("status_last_mp3"))
             else:
                 self.play_mp3_index(nxt)
             return
         nxt = self._next_index()
         if nxt is None:
-            self.status.config(text="마지막 곡입니다.")
+            self.status.config(text=self.t("status_last_song"))
         else:
             self.play_index(nxt)
 
@@ -1244,7 +1339,7 @@ class YoutubeFinder(tk.Tk):
         self.clipboard_append("\n".join(
             p.get("url") or p.get("path", "") for p in self.playlist
         ))
-        self.status.config(text=f"재생 리스트 {len(self.playlist)}개 URL을 복사했습니다.")
+        self.status.config(text=self.t("status_urls_copied", n=len(self.playlist)))
 
     def _set_save_buttons_state(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -1260,7 +1355,7 @@ class YoutubeFinder(tk.Tk):
     def save_all_mp3(self) -> None:
         """재생 리스트의 모든 곡을 MP3로 저장."""
         if not self.playlist:
-            self.status.config(text="재생 리스트가 비어 있습니다.")
+            self.status.config(text=self.t("status_pl_empty"))
             return
         self._start_mp3_download(list(self.playlist))
 
@@ -1268,7 +1363,7 @@ class YoutubeFinder(tk.Tk):
         """재생 리스트에서 선택한 곡 한 곡만 MP3로 저장."""
         idx = self._plist_index()
         if idx is None:
-            self.status.config(text="저장할 곡을 선택하세요.")
+            self.status.config(text=self.t("status_pick_save_song"))
             return
         self._start_mp3_download([self.playlist[idx]])
 
@@ -1276,11 +1371,11 @@ class YoutubeFinder(tk.Tk):
         """재생 리스트에서 선택한 MV 한 개를 영상 파일로 저장."""
         idx = self._plist_index()
         if idx is None:
-            self.status.config(text="저장할 MV를 선택하세요.")
+            self.status.config(text=self.t("status_pick_save_mv"))
             return
         item = self.playlist[idx]
         if item.get("media_type") != "mv":
-            self.status.config(text="선택한 항목은 MV가 아닙니다. 🎬 MV 항목을 선택하세요.")
+            self.status.config(text=self.t("status_not_mv"))
             return
         self._start_mv_download([item])
 
@@ -1288,14 +1383,14 @@ class YoutubeFinder(tk.Tk):
         """재생 리스트에 있는 모든 MV를 영상 파일로 저장."""
         items = self._playlist_mv_items()
         if not items:
-            self.status.config(text="재생 리스트에 MV가 없습니다.")
+            self.status.config(text=self.t("status_no_mv_in_pl"))
             return
         self._start_mv_download(items)
 
     def _start_mp3_download(self, items: list[dict]) -> None:
         if self._saving:
             return
-        folder = filedialog.askdirectory(title="MP3를 저장할 폴더 선택")
+        folder = filedialog.askdirectory(title=self.t("dlg_mp3_save"))
         if not folder:
             return
         self._saving = True
@@ -1310,7 +1405,7 @@ class YoutubeFinder(tk.Tk):
         res_label = self._mv_resolution.get()
         max_height = self._mv_max_height()
         folder = filedialog.askdirectory(
-            title=f"뮤직비디오 MP4 저장 ({res_label}) — 폴더 선택",
+            title=self.t("dlg_mv_save", res=res_label),
         )
         if not folder:
             return
@@ -1338,7 +1433,7 @@ class YoutubeFinder(tk.Tk):
                 label = f"MV ({res_label})"
             else:
                 label = "MP3"
-            self._queue.put(("status", f"{label} 저장 중 ({i}/{total}): {item['title']} …"))
+            self._queue.put(("status", self.t("status_saving", label=label, i=i, total=total, title=item["title"])))
             if is_mv:
                 opts = _ytdlp_opts(
                     format=mv_format(max_height),
@@ -1370,15 +1465,15 @@ class YoutubeFinder(tk.Tk):
     def create_kar_from_playlist(self) -> None:
         """재생 리스트 선택 곡: MP3를 받은 뒤 KAR MIDI 생성."""
         if not _HAS_KAR:
-            self.status.config(text="KAR 생성 불가: mido·numpy 미설치")
+            self.status.config(text=self.t("status_kar_no_mod"))
             return
         idx = self._plist_index()
         if idx is None:
-            self.status.config(text="KAR로 만들 곡을 재생 리스트에서 선택하세요.")
+            self.status.config(text=self.t("status_kar_pick"))
             return
         if self._kar_creating or self._saving:
             return
-        folder = filedialog.askdirectory(title="KAR MIDI를 저장할 폴더 선택")
+        folder = filedialog.askdirectory(title=self.t("dlg_kar_save"))
         if not folder:
             return
         item = self.playlist[idx]
@@ -1401,7 +1496,7 @@ class YoutubeFinder(tk.Tk):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 mp3_path = os.path.join(tmp, "audio.mp3")
-                self._queue.put(("status", f"MP3 다운로드 중: {item['title']} …"))
+                self._queue.put(("status", self.t("status_kar_mp3_dl", title=item["title"])))
                 opts = {
                     "quiet": True, "no_warnings": True, "noplaylist": True,
                     "format": "bestaudio/best",
@@ -1417,11 +1512,11 @@ class YoutubeFinder(tk.Tk):
                 if not os.path.isfile(mp3_path):
                     mp3s = [f for f in os.listdir(tmp) if f.endswith(".mp3")]
                     if not mp3s:
-                        raise RuntimeError("MP3 다운로드 실패")
+                        raise RuntimeError(self.t("err_mp3_dl"))
                     mp3_path = os.path.join(tmp, mp3s[0])
                 safe = re.sub(r'[<>:"/\\|?*]', "_", title)[:120]
                 out = os.path.join(folder, f"{safe}.kar")
-                self._queue.put(("status", f"KAR MIDI 생성 중: {title} …"))
+                self._queue.put(("status", self.t("status_kar_creating", title=title)))
                 create_kar_from_mp3(mp3_path, out, title=title, artist=artist)
                 ok = 1
         except Exception as exc:  # noqa: BLE001
