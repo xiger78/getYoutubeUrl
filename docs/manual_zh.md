@@ -20,6 +20,7 @@
 9. [歌词面板](#歌词面板)
 10. [快捷键](#快捷键)
 11. [故障排除](#故障排除)
+12. [其他命令](#其他命令)
 
 ---
 
@@ -154,6 +155,124 @@ sudo apt install -y python3-tk vlc ffmpeg && ./run.sh
 | MP3 不显示 | 检查格式与文件夹，点 🔄 |
 
 **GitHub:** [https://github.com/xiger78/getYoutubeUrl](https://github.com/xiger78/getYoutubeUrl)
+
+---
+
+## 其他命令
+
+在项目根目录 `getYoutubeUrl/` 下执行。
+
+### 克隆仓库
+
+```bash
+git clone https://github.com/xiger78/getYoutubeUrl.git
+cd getYoutubeUrl
+```
+
+### macOS
+
+| 命令 / 文件 | 说明 |
+|-------------|------|
+| `./setup-mac.sh` | 自动安装 uv、Python 3.11、VLC、ffmpeg、`.venv` |
+| `./run.sh` | 运行程序（自动配置 VLC·ffmpeg PATH） |
+| `VLC_APP=/Applications/VLC.app ./run.sh` | 指定 VLC 路径运行 |
+| `.venv/bin/python getYoutubeUrl.py` | 直接运行（需 VLC 环境变量） |
+
+```bash
+VLC_MACOS="$HOME/Applications/VLC.app/Contents/MacOS"
+export DYLD_LIBRARY_PATH="$VLC_MACOS/lib"
+export VLC_PLUGIN_PATH="$VLC_MACOS/plugins"
+export PATH="$HOME/.local/bin:$PATH"
+./.venv/bin/python getYoutubeUrl.py
+```
+
+### Linux（Debian / 树莓派等）
+
+| 命令 / 文件 | 说明 |
+|-------------|------|
+| `sudo bash setup-debian.sh` | 安装 apt 包 + `.venv` + pip |
+| `bash setup-debian.sh --venv-only` | 仅 `.venv`·pip（无需 sudo） |
+| `sudo bash setup-debian.sh --with-korean` | 安装 + fcitx5 韩文输入法 |
+| `bash setup-debian.sh --help` | 查看选项 |
+| `./run.sh` | 运行（含 `DISPLAY`、fcitx5 设置） |
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -U pip -r requirements.txt
+sudo apt install -y python3-tk vlc ffmpeg
+
+DISPLAY=:0 ./.venv/bin/python getYoutubeUrl.py
+
+DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority nohup ./run.sh >> /tmp/getYoutubeUrl.log 2>&1 &
+
+pkill -f getYoutubeUrl.py
+```
+
+### Windows
+
+| 文件 | 说明 |
+|------|------|
+| `setup-windows.bat` | winget 环境搭建（无 winget 则转 manual） |
+| `setup-windows.ps1` | bat 对应的 PowerShell |
+| `setup-windows-manual.bat` | 无 winget 手动安装 |
+| `setup-windows-manual.ps1` | manual bat 的 PowerShell |
+| `run-windows.bat` | 运行程序 |
+| `run-windows.ps1` | 运行逻辑 |
+| `fix-run-windows.bat` | 运行失败诊断与修复 |
+| `fix-run-windows.ps1` | fix bat 的 PowerShell |
+
+```text
+1. 双击 setup-windows.bat（或 setup-windows-manual.bat）
+2. 双击 run-windows.bat
+   ※ 失败时运行 fix-run-windows.bat
+```
+
+```powershell
+cd getYoutubeUrl
+.\run-windows.ps1
+```
+
+### 手册与截图
+
+| 命令 | 说明 |
+|------|------|
+| `.venv/bin/python scripts/render_manual_screenshots.py` | 生成各语言 UI 截图 → `docs/screenshots/` |
+| `./run.sh scripts/capture_manual_screenshots.py` | macOS 真实窗口截图（需屏幕录制权限） |
+
+```bash
+uv pip install pillow
+.venv/bin/pip install pillow
+```
+
+### 包更新与维护
+
+```bash
+.venv/bin/pip install -U yt-dlp
+.venv/bin/pip install -U pip -r requirements.txt
+.venv/bin/pip install syncedlyrics
+uv pip install -r requirements.txt
+```
+
+Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -U yt-dlp
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### 主要文件
+
+| 路径 | 说明 |
+|------|------|
+| `getYoutubeUrl.py` | 主程序 |
+| `i18n.py` | 多语言 UI 文本 |
+| `kar_maker.py` | KAR MIDI 生成 |
+| `requirements.txt` | Python 依赖 |
+| `docs/manual_*.md` | 各语言手册 |
+| `docs/screenshots/` | 手册截图 |
+| `scripts/render_manual_screenshots.py` | 截图渲染 |
+| `scripts/capture_manual_screenshots.py` | 截图捕获 |
+| `README.md` | 项目 README |
 
 ---
 

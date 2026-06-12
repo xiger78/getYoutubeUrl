@@ -11,16 +11,57 @@ User manuals with UI screenshots for each supported language.
 
 Language order in app: **日本語 → 中文 → 한국어 → English**
 
-## Regenerate screenshots
+Each manual includes an **Other commands** section with OS-specific setup/run scripts, screenshot tools, and maintenance commands.
+
+---
+
+## Quick reference — all platforms
+
+### Run
+
+| OS | Command |
+|----|---------|
+| macOS / Linux | `./run.sh` |
+| Windows | `run-windows.bat` (or `.\run-windows.ps1`) |
+
+### First-time setup
+
+| OS | Command |
+|----|---------|
+| macOS | `./setup-mac.sh` |
+| Linux (Debian) | `sudo bash setup-debian.sh` |
+| Linux (venv only) | `bash setup-debian.sh --venv-only` |
+| Windows | `setup-windows.bat` or `setup-windows-manual.bat` |
+| Windows fix | `fix-run-windows.bat` |
+
+### Regenerate manual screenshots
 
 ```bash
 .venv/bin/python scripts/render_manual_screenshots.py
 ```
 
-Screenshots reflect the current UI layout (playlist download buttons, local MP3, single-row playback controls).
-
-Live capture (macOS, Screen Recording permission):
+Live window capture (macOS, Screen Recording permission):
 
 ```bash
 ./run.sh scripts/capture_manual_screenshots.py
 ```
+
+### Update yt-dlp
+
+```bash
+.venv/bin/pip install -U yt-dlp
+```
+
+Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -U yt-dlp
+```
+
+### Stop background process (Linux)
+
+```bash
+pkill -f getYoutubeUrl.py
+```
+
+See each [manual](manual_ja.md) for the full command reference.
